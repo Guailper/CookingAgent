@@ -1,0 +1,15 @@
+# Web 框架与服务启动
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+
+# 数据库与迁移
+sqlalchemy>=2.0,<3.0
+pymysql>=1.1,<2.0
+alembic>=1.13,<2.0
+
+# 配置与数据校验
+pydantic>=2.8,<3.0
+python-dotenv>=1.0,<2.0
+
+# 文件上传接口通常会用到 multipart 解析
+python-multipart>=0.0.9,<1.0

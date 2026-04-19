@@ -1,7 +1,20 @@
+/*
+ * 认证服务层。
+ *
+ * 这个文件负责把前端表单和后端认证接口衔接起来，同时保留本地的
+ * “记住密码”和简单会话缓存能力，方便本地联调与后续扩展。
+ */
+
 export type AuthenticatedUser = {
+  publicId: string;
   fullName: string;
   email: string;
   createdAt: string;
+};
+
+export type AuthSession = {
+  accessToken: string;
+  user: AuthenticatedUser;
 };
 
 export type RememberedCredentials = {
@@ -22,12 +35,41 @@ export type RegisterInput = {
   confirmPassword: string;
 };
 
-type StoredAccount = AuthenticatedUser & {
-  password: string;
+type StoredSession = AuthSession;
+
+type ApiErrorResponse = {
+  code?: string;
+  message?: string;
+  detail?: unknown;
 };
 
-const ACCOUNTS_KEY = "cooking-agent.accounts";
+type ApiUserProfile = {
+  public_id: string;
+  username: string;
+  email: string;
+  status: string;
+  last_login_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type ApiAuthResponse = {
+  message: string;
+  data: {
+    access_token: string;
+    token_type: string;
+    user: ApiUserProfile;
+  };
+};
+
+type ApiCurrentUserResponse = {
+  message: string;
+  data: ApiUserProfile;
+};
+
 const REMEMBERED_KEY = "cooking-agent.remembered";
+const SESSION_KEY = "cooking-agent.session";
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "/api/v1").replace(/\/$/, "");
 
 export class AuthServiceError extends Error {
   constructor(
@@ -77,21 +119,90 @@ function clearStorageKey(key: string) {
   window.localStorage.removeItem(key);
 }
 
-function readAccounts() {
-  const accounts = readJson<StoredAccount[]>(ACCOUNTS_KEY, []);
-  return Array.isArray(accounts) ? accounts : [];
-}
-
-function toPublicUser(account: StoredAccount): AuthenticatedUser {
+function toPublicUser(profile: ApiUserProfile): AuthenticatedUser {
   return {
-    fullName: account.fullName,
-    email: account.email,
-    createdAt: account.createdAt,
+    publicId: profile.public_id,
+    fullName: profile.username,
+    email: profile.email,
+    createdAt: profile.created_at,
   };
 }
 
-export function getDemoAccountCount() {
-  return readAccounts().length;
+function getAuthHeaders(accessToken?: string) {
+  return {
+    "Content-Type": "application/json",
+    ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+  };
+}
+
+function persistSession(session: StoredSession) {
+  writeJson(SESSION_KEY, session);
+}
+
+function toAuthServiceError(
+  payload: ApiErrorResponse | null,
+  status: number,
+): AuthServiceError {
+  const code = payload?.code ?? `http_${status}`;
+  const backendMessage = payload?.message ?? "请求失败，请稍后重试。";
+
+  switch (code) {
+    case "EMAIL_ALREADY_EXISTS":
+    case "USER_CREATE_CONFLICT":
+      return new AuthServiceError(
+        code,
+        "邮箱已被注册",
+        "请使用其他邮箱，或返回登录已有账号。",
+      );
+    case "INVALID_CREDENTIALS":
+      return new AuthServiceError(
+        code,
+        "登录失败",
+        "邮箱或密码不正确，请检查后重试。",
+      );
+    case "AUTH_REQUIRED":
+    case "INVALID_ACCESS_TOKEN":
+    case "USER_NOT_FOUND":
+      return new AuthServiceError(
+        code,
+        "登录状态失效",
+        "当前登录状态已失效，请重新登录。",
+      );
+    case "USER_DISABLED":
+      return new AuthServiceError(
+        code,
+        "账号不可用",
+        "当前账号状态不可用，请联系管理员处理。",
+      );
+    default:
+      return new AuthServiceError(
+        code,
+        status >= 500 ? "服务暂时不可用" : "请求未完成",
+        backendMessage,
+      );
+  }
+}
+
+async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  let response: Response;
+
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, init);
+  } catch {
+    throw new AuthServiceError(
+      "network_error",
+      "连接后端失败",
+      "无法连接到后端服务，请确认前后端都已启动。",
+    );
+  }
+
+  const payload = (await response.json().catch(() => null)) as ApiErrorResponse | T | null;
+
+  if (!response.ok) {
+    throw toAuthServiceError(payload as ApiErrorResponse | null, response.status);
+  }
+
+  return payload as T;
 }
 
 export function getRememberedCredentials() {
@@ -108,7 +219,26 @@ export function getRememberedCredentials() {
   return null;
 }
 
-export async function login(input: LoginInput): Promise<AuthenticatedUser> {
+export function getStoredSession() {
+  const session = readJson<StoredSession | null>(SESSION_KEY, null);
+
+  if (
+    session &&
+    typeof session.accessToken === "string" &&
+    session.user &&
+    typeof session.user.email === "string"
+  ) {
+    return session;
+  }
+
+  return null;
+}
+
+export function clearSession() {
+  clearStorageKey(SESSION_KEY);
+}
+
+export async function login(input: LoginInput): Promise<AuthSession> {
   const email = normalizeEmail(input.email);
   const password = input.password.trim();
 
@@ -120,17 +250,11 @@ export async function login(input: LoginInput): Promise<AuthenticatedUser> {
     );
   }
 
-  const matchedAccount = readAccounts().find(
-    (account) => account.email === email && account.password === password,
-  );
-
-  if (!matchedAccount) {
-    throw new AuthServiceError(
-      "account_not_found",
-      "账号不存在",
-      "请先注册账号，或确认保存的邮箱和密码是否正确。",
-    );
-  }
+  const response = await requestJson<ApiAuthResponse>("/auth/login", {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ email, password }),
+  });
 
   if (input.remember) {
     writeJson(REMEMBERED_KEY, { email, password });
@@ -138,13 +262,15 @@ export async function login(input: LoginInput): Promise<AuthenticatedUser> {
     clearStorageKey(REMEMBERED_KEY);
   }
 
-  return toPublicUser(matchedAccount);
+  const session = {
+    accessToken: response.data.access_token,
+    user: toPublicUser(response.data.user),
+  };
+  persistSession(session);
+  return session;
 }
 
-export async function registerAccount(input: RegisterInput): Promise<{
-  createdUser: AuthenticatedUser;
-  nextLogin: RememberedCredentials;
-}> {
+export async function registerAccount(input: RegisterInput): Promise<AuthSession> {
   const fullName = input.fullName.trim();
   const email = normalizeEmail(input.email);
   const password = input.password.trim();
@@ -174,32 +300,46 @@ export async function registerAccount(input: RegisterInput): Promise<{
     );
   }
 
-  const accounts = readAccounts();
+  const response = await requestJson<ApiAuthResponse>("/auth/register", {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({
+      username: fullName,
+      email,
+      password,
+    }),
+  });
 
-  if (accounts.some((account) => account.email === email)) {
+  const session = {
+    accessToken: response.data.access_token,
+    user: toPublicUser(response.data.user),
+  };
+  persistSession(session);
+  return session;
+}
+
+export async function getCurrentUser(): Promise<AuthenticatedUser> {
+  const session = getStoredSession();
+
+  if (!session?.accessToken) {
     throw new AuthServiceError(
-      "email_exists",
-      "邮箱已被注册",
-      "请使用其他邮箱，或返回登录已有账号。",
+      "missing_session",
+      "尚未登录",
+      "当前没有可用的登录状态。",
     );
   }
 
-  const nextAccount: StoredAccount = {
-    fullName,
-    email,
-    password,
-    createdAt: new Date().toISOString(),
-  };
+  const response = await requestJson<ApiCurrentUserResponse>("/auth/me", {
+    method: "GET",
+    headers: getAuthHeaders(session.accessToken),
+  });
 
-  writeJson(ACCOUNTS_KEY, [...accounts, nextAccount]);
-
-  return {
-    createdUser: toPublicUser(nextAccount),
-    nextLogin: {
-      email,
-      password,
-    },
+  const nextSession = {
+    ...session,
+    user: toPublicUser(response.data),
   };
+  persistSession(nextSession);
+  return nextSession.user;
 }
 
 export async function requestPasswordReset(email: string) {

@@ -1,6 +1,8 @@
 import { FormEvent, startTransition, useState } from "react";
 import {
   AuthServiceError,
+  clearSession,
+  getStoredSession,
   getRememberedCredentials,
   login,
   registerAccount,
@@ -65,7 +67,9 @@ function createNoticeFromError(error: unknown): Notice {
 
 function App() {
   const [mode, setMode] = useState<AuthMode>("login");
-  const [activeUser, setActiveUser] = useState<AuthenticatedUser | null>(null);
+  const [activeUser, setActiveUser] = useState<AuthenticatedUser | null>(() => {
+    return getStoredSession()?.user ?? null;
+  });
   const [notice, setNotice] = useState<Notice | null>(null);
   const [loginForm, setLoginForm] = useState<LoginFormState>(() => {
     const remembered = getRememberedCredentials();
@@ -109,15 +113,15 @@ function App() {
     event.preventDefault();
 
     try {
-      const user = await login(loginForm);
+      const session = await login(loginForm);
       const trimmedPassword = loginForm.password.trim();
 
       setLoginForm((currentState) => ({
         ...currentState,
-        email: user.email,
+        email: session.user.email,
         password: trimmedPassword,
       }));
-      setActiveUser(user);
+      setActiveUser(session.user);
       setNotice({
         tone: "success",
         title: "登录成功",
@@ -132,20 +136,21 @@ function App() {
     event.preventDefault();
 
     try {
-      const result = await registerAccount(registerForm);
+      const session = await registerAccount(registerForm);
 
       setRegisterForm(INITIAL_REGISTER_FORM);
       setLoginForm((currentState) => ({
         ...currentState,
-        email: result.nextLogin.email,
-        password: result.nextLogin.password,
+        email: session.user.email,
+        password: "",
+        remember: false,
       }));
+      setActiveUser(session.user);
       setNotice({
         tone: "success",
         title: "注册成功",
-        description: "账号已经创建完成，已为你自动填入登录信息。",
+        description: "账号已经创建完成，并已自动登录。",
       });
-      startTransition(() => setMode("login"));
     } catch (error) {
       setNotice(createNoticeFromError(error));
     }
@@ -344,6 +349,7 @@ function App() {
             className="secondary-button"
             type="button"
             onClick={() => {
+              clearSession();
               setActiveUser(null);
               setNotice(null);
             }}
