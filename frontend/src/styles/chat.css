@@ -1,0 +1,886 @@
+/*
+ * 这是系统主界面的专属样式。
+ * 布局目标：
+ * 1. 左侧是可折叠菜单栏
+ * 2. 右侧是主聊天区
+ * 3. 欢迎态与对话态之间可以平滑切换
+ */
+
+.workspace-page {
+  position: relative;
+  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  overflow: hidden;
+  background: linear-gradient(180deg, #f4f4f9 0%, #f0f1f7 100%);
+}
+
+.workspace-sidebar {
+  position: relative;
+  width: 288px;
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 18px;
+  padding: 22px 18px 20px;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(250, 250, 255, 0.98), rgba(244, 245, 252, 0.96));
+  border-right: 1px solid rgba(102, 115, 149, 0.12);
+  transition:
+    width 220ms ease,
+    padding 220ms ease,
+    opacity 220ms ease,
+    border-color 220ms ease;
+}
+
+.workspace-sidebar--collapsed {
+  width: 0;
+  padding: 0;
+  opacity: 0;
+  border-right-color: transparent;
+  pointer-events: none;
+}
+
+.workspace-sidebar--collapsed > * {
+  visibility: hidden;
+}
+
+.workspace-sidebar-toggle {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  z-index: 4;
+  width: 46px;
+  height: 46px;
+  border: 0;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.88);
+  color: #42597e;
+  box-shadow: 0 16px 30px rgba(123, 133, 152, 0.18);
+  transition:
+    left 220ms ease,
+    background 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
+
+.workspace-sidebar-toggle:hover {
+  background: rgba(255, 255, 255, 0.98);
+  transform: translateY(-1px);
+}
+
+.workspace-page--sidebar-open .workspace-sidebar-toggle {
+  left: 306px;
+}
+
+.workspace-sidebar__brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.workspace-sidebar__brand-mark,
+.workspace-user__avatar {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #44658f, #355786);
+  color: #fff;
+  font-weight: 800;
+}
+
+.workspace-sidebar__brand-copy,
+.workspace-user__copy {
+  display: grid;
+  gap: 4px;
+}
+
+.workspace-sidebar__brand-copy strong,
+.workspace-user__copy strong {
+  font-size: 0.95rem;
+}
+
+.workspace-sidebar__brand-copy span,
+.workspace-user__copy span {
+  color: var(--muted);
+  font-size: 0.83rem;
+}
+
+.new-conversation-button {
+  min-height: 54px;
+  border: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: linear-gradient(180deg, #4e709d, #3f618e);
+  color: #fff;
+  box-shadow: 0 16px 28px rgba(63, 97, 142, 0.2);
+}
+
+.workspace-sidebar--collapsed .new-conversation-button span,
+.workspace-sidebar--collapsed .workspace-sidebar__section-title,
+.workspace-sidebar--collapsed .history-item__copy,
+.workspace-sidebar--collapsed .workspace-sidebar__brand-copy,
+.workspace-sidebar--collapsed .workspace-user__copy {
+  display: none;
+}
+
+.workspace-sidebar__section {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 14px;
+}
+
+.workspace-sidebar__section-title {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.workspace-sidebar__history {
+  min-height: 0;
+  padding-right: 4px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.history-item {
+  width: 100%;
+  min-height: 50px;
+  border: 0;
+  border-radius: 20px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.history-item:hover {
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.history-item--active {
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 12px 24px rgba(149, 160, 186, 0.14);
+}
+
+.history-item__icon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(83, 112, 154, 0.08);
+  color: #45678f;
+  flex: 0 0 auto;
+}
+
+.history-item__copy {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.history-item__copy strong {
+  display: block;
+  font-size: 0.9rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-item__copy small {
+  color: var(--muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-sidebar__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 10px;
+}
+
+.workspace-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.workspace-settings {
+  position: relative;
+}
+
+.icon-button {
+  width: 42px;
+  height: 42px;
+  border: 0;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.74);
+  color: #42597e;
+}
+
+.icon-button:hover {
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.settings-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 12px);
+  width: 272px;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(118, 132, 160, 0.16);
+  box-shadow: 0 20px 42px rgba(111, 125, 150, 0.22);
+}
+
+.settings-menu__item {
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 16px;
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  background: transparent;
+}
+
+.settings-menu__item:hover {
+  background: rgba(83, 112, 154, 0.08);
+}
+
+.settings-menu__item strong {
+  font-size: 0.9rem;
+}
+
+.settings-menu__item span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.workspace-main {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  background:
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.85), transparent 26%),
+    linear-gradient(180deg, rgba(248, 246, 236, 0.65), rgba(239, 241, 248, 0.9));
+}
+
+/*
+ * 主工作区的内容层承担两个职责：
+ * 1. 吸收顶部通知横幅的高度变化
+ * 2. 给消息区和底部输入区提供稳定的剩余高度
+ *
+ * 这样无论提示条是否出现，输入框都能继续停留在主区域底部。
+ */
+.workspace-main__content {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.workspace-topbar {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 20px;
+  padding: 18px 26px 18px 86px;
+  border-bottom: 1px solid rgba(101, 115, 144, 0.1);
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(12px);
+}
+
+.workspace-topbar__left,
+.workspace-topbar__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.workspace-brand {
+  display: grid;
+  gap: 3px;
+}
+
+.workspace-brand strong {
+  font-size: 1.15rem;
+}
+
+.workspace-brand span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.workspace-search-shell {
+  position: relative;
+}
+
+.workspace-search {
+  min-height: 46px;
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.8);
+  color: #98a0b0;
+  border: 1px solid transparent;
+}
+
+.workspace-search--active {
+  border-color: rgba(84, 108, 150, 0.18);
+  box-shadow: 0 16px 30px rgba(141, 151, 170, 0.16);
+}
+
+.workspace-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.workspace-search input::placeholder {
+  color: #98a0b0;
+}
+
+.workspace-search-results {
+  position: absolute;
+  top: calc(100% + 12px);
+  left: 0;
+  right: 0;
+  z-index: 3;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(22px);
+  border: 1px solid rgba(103, 117, 145, 0.14);
+  box-shadow: 0 24px 44px rgba(126, 136, 154, 0.2);
+}
+
+.workspace-search-result {
+  padding: 14px 16px;
+  border: 0;
+  border-radius: 18px;
+  display: grid;
+  gap: 8px;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.52);
+}
+
+.workspace-search-result:hover {
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.workspace-search-result__tag {
+  justify-self: flex-start;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(69, 99, 143, 0.12);
+  color: #49658a;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.workspace-search-result strong {
+  font-size: 0.95rem;
+}
+
+.workspace-search-result p,
+.workspace-search-results__empty {
+  margin: 0;
+  color: #667083;
+  line-height: 1.6;
+  font-size: 0.86rem;
+}
+
+.workspace-search-results__empty {
+  padding: 18px 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.workspace-main__body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 20px;
+  padding: 28px 34px 30px;
+  overflow: hidden;
+}
+
+.workspace-main__notice-shell {
+  flex: 0 0 auto;
+  padding: 18px 34px 0;
+}
+
+/*
+ * 消息滚动容器只负责承接“可滚动主体”。
+ * 真正会变长的内容都留在这里，底部输入框则放在单独的固定行内。
+ */
+.message-scroll-container {
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.message-scroll-container > * {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+/*
+ * 输入框容器不参与滚动，只保留一个稳定的底部槽位。
+ * 这样消息列表增长时，浏览器只会压缩上方滚动区，不会移动输入框。
+ */
+.message-input-container {
+  flex-shrink: 0;
+}
+
+.workspace-empty-state {
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 34px;
+  padding: 30px 12px 12px;
+  text-align: center;
+}
+
+.workspace-empty-state__hero {
+  display: grid;
+  gap: 12px;
+}
+
+.workspace-empty-state__hero h1 {
+  margin: 0;
+  font-size: clamp(2.5rem, 4.6vw, 4rem);
+  letter-spacing: -0.05em;
+}
+
+.workspace-empty-state__hero p {
+  margin: 0;
+  color: #6f7482;
+  font-size: 1rem;
+}
+
+.workspace-badge {
+  justify-self: center;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(55, 86, 128, 0.12);
+  color: #49658a;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.workspace-badge--soft {
+  justify-self: flex-start;
+}
+
+.workspace-suggestion-grid {
+  width: min(100%, 860px);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.suggestion-card {
+  min-height: 166px;
+  padding: 22px 20px;
+  border: 0;
+  border-radius: 30px;
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 22px 36px rgba(156, 165, 177, 0.18);
+  text-align: left;
+}
+
+.suggestion-card:hover {
+  transform: translateY(-2px);
+}
+
+.suggestion-card__icon {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: rgba(71, 100, 145, 0.08);
+  color: #45658d;
+}
+
+.suggestion-card strong {
+  font-size: 1rem;
+}
+
+.suggestion-card p {
+  margin: 0;
+  color: #687183;
+  line-height: 1.7;
+  font-size: 0.9rem;
+}
+
+.composer {
+  width: min(100%, 900px);
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 10px 10px 16px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 20px 40px rgba(146, 154, 167, 0.16);
+}
+
+.composer--floating {
+  margin-top: 28px;
+}
+
+.composer__field {
+  flex: 1;
+}
+
+.composer__field input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.composer__field input::placeholder {
+  color: #9aa2b1;
+}
+
+.composer__send {
+  width: 48px;
+  height: 48px;
+  border: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(180deg, #4f6f99, #375a86);
+  color: #fff;
+  transition:
+    background 180ms ease,
+    transform 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.composer__send:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 24px rgba(63, 97, 142, 0.22);
+}
+
+.composer__send:disabled {
+  background: linear-gradient(180deg, #c7ced9, #b8c0cc);
+  color: rgba(255, 255, 255, 0.92);
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.message-panel {
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 22px;
+}
+
+.message-panel__header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.message-panel__header h2 {
+  margin: 10px 0 8px;
+  font-size: 2rem;
+}
+
+.message-panel__header p,
+.message-panel__header small {
+  margin: 0;
+  color: #707788;
+}
+
+.message-list {
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: 16px;
+  padding-right: 8px;
+  padding-bottom: 4px;
+}
+
+.message-list__empty {
+  justify-self: stretch;
+  padding: 24px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #687182;
+  line-height: 1.7;
+  box-shadow: 0 14px 28px rgba(149, 160, 174, 0.1);
+}
+
+.message-bubble {
+  width: fit-content;
+  min-width: min(220px, 100%);
+  max-width: min(68%, 720px);
+  justify-self: start;
+  padding: 16px 18px 18px;
+  border-radius: 24px;
+  display: grid;
+  gap: 12px;
+  box-shadow: 0 14px 28px rgba(149, 160, 174, 0.12);
+}
+
+.message-bubble--assistant {
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.message-bubble--user {
+  justify-self: end;
+  background: linear-gradient(180deg, #4f6f99, #3f628f);
+  color: #fff;
+}
+
+.message-bubble__meta {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.message-bubble__role {
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.message-bubble p {
+  margin: 0;
+  line-height: 1.8;
+  font-size: 0.96rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.message-bubble time {
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  opacity: 0.72;
+  text-align: right;
+}
+
+.settings-panel {
+  position: absolute;
+  top: 96px;
+  right: 26px;
+  width: min(360px, calc(100% - 52px));
+  padding: 18px;
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(116, 128, 154, 0.16);
+  box-shadow: 0 26px 46px rgba(112, 124, 145, 0.22);
+}
+
+.settings-panel__header,
+.settings-panel__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-panel__header h3 {
+  margin: 8px 0 0;
+  font-size: 1.25rem;
+}
+
+.settings-panel__content {
+  padding: 18px 0;
+}
+
+.settings-panel__lead {
+  margin: 0 0 14px;
+  color: #687182;
+  line-height: 1.7;
+}
+
+.settings-card-list {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-card {
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(67, 97, 141, 0.06);
+}
+
+.settings-card strong {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.settings-card p {
+  margin: 0;
+  color: #687182;
+  line-height: 1.65;
+}
+
+.text-action-button,
+.secondary-action-button {
+  border: 0;
+  background: transparent;
+  color: #45658d;
+  font-weight: 700;
+}
+
+.secondary-action-button {
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: rgba(69, 101, 141, 0.1);
+}
+
+@media (max-width: 1120px) {
+  .workspace-sidebar:not(.workspace-sidebar--collapsed) {
+    width: 92px;
+    padding-inline: 14px;
+    opacity: 1;
+    pointer-events: auto;
+    border-right-color: rgba(102, 115, 149, 0.12);
+  }
+
+  .workspace-page--sidebar-open .workspace-sidebar-toggle {
+    left: 110px;
+  }
+
+  .workspace-page--sidebar-closed .workspace-sidebar-toggle {
+    left: 18px;
+  }
+
+  .workspace-sidebar__section-title,
+  .history-item__copy,
+  .workspace-user__copy,
+  .new-conversation-button span {
+    display: none;
+  }
+
+  .workspace-topbar {
+    padding-left: 78px;
+  }
+
+  .workspace-search-results {
+    left: -10px;
+    right: -10px;
+  }
+
+  .workspace-suggestion-grid {
+    grid-template-columns: 1fr;
+    max-width: 520px;
+  }
+}
+
+@media (max-width: 780px) {
+  .workspace-sidebar {
+    display: none;
+  }
+
+  .workspace-sidebar-toggle,
+  .workspace-page--sidebar-open .workspace-sidebar-toggle,
+  .workspace-page--sidebar-closed .workspace-sidebar-toggle {
+    left: 18px;
+  }
+
+  .workspace-topbar {
+    grid-template-columns: 1fr;
+    justify-items: stretch;
+    padding: 18px 18px 18px 78px;
+  }
+
+  .workspace-topbar__left,
+  .workspace-topbar__actions {
+    justify-content: space-between;
+  }
+
+  .workspace-main__body {
+    padding: 22px 18px 24px;
+  }
+
+  .workspace-main__notice-shell {
+    padding: 16px 18px 0;
+  }
+
+  .workspace-search-results {
+    left: 0;
+    right: 0;
+  }
+
+  .settings-panel {
+    right: 18px;
+    left: 18px;
+    width: auto;
+  }
+
+  .message-bubble {
+    min-width: 0;
+    max-width: 100%;
+  }
+}

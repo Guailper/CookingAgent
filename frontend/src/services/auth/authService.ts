@@ -1,71 +1,27 @@
 /*
- * 认证服务层。
+ * 认证服务层：
+ * 1. 负责和后端接口通信
+ * 2. 负责本地 session / remember 信息的存取
+ * 3. 负责把后端返回的数据转换成前端更容易使用的结构
  *
- * 这个文件负责把前端表单和后端认证接口衔接起来，同时保留本地的
- * “记住密码”和简单会话缓存能力，方便本地联调与后续扩展。
+ * 页面和组件尽量不要直接写 fetch，而是统一走这里。
  */
 
-export type AuthenticatedUser = {
-  publicId: string;
-  fullName: string;
-  email: string;
-  createdAt: string;
-};
-
-export type AuthSession = {
-  accessToken: string;
-  user: AuthenticatedUser;
-};
-
-export type RememberedCredentials = {
-  email: string;
-  password: string;
-};
-
-export type LoginInput = {
-  email: string;
-  password: string;
-  remember: boolean;
-};
-
-export type RegisterInput = {
-  fullName: string;
-  email: string;
-  password: string;
-  confirmPassword: string;
-};
+import type {
+  ApiAuthResponse,
+  ApiCurrentUserResponse,
+  ApiErrorResponse,
+  ApiUserProfile,
+} from "../../types";
+import type {
+  AuthenticatedUser,
+  AuthSession,
+  LoginInput,
+  RegisterInput,
+  RememberedCredentials,
+} from "../../types";
 
 type StoredSession = AuthSession;
-
-type ApiErrorResponse = {
-  code?: string;
-  message?: string;
-  detail?: unknown;
-};
-
-type ApiUserProfile = {
-  public_id: string;
-  username: string;
-  email: string;
-  status: string;
-  last_login_at: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type ApiAuthResponse = {
-  message: string;
-  data: {
-    access_token: string;
-    token_type: string;
-    user: ApiUserProfile;
-  };
-};
-
-type ApiCurrentUserResponse = {
-  message: string;
-  data: ApiUserProfile;
-};
 
 const REMEMBERED_KEY = "cooking-agent.remembered";
 const SESSION_KEY = "cooking-agent.session";
@@ -165,7 +121,7 @@ function toAuthServiceError(
     case "USER_NOT_FOUND":
       return new AuthServiceError(
         code,
-        "登录状态失效",
+        "登录状态已失效",
         "当前登录状态已失效，请重新登录。",
       );
     case "USER_DISABLED":
@@ -192,7 +148,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     throw new AuthServiceError(
       "network_error",
       "连接后端失败",
-      "无法连接到后端服务，请确认前后端都已启动。",
+      "无法连接到后端服务，请确认前后端都已经启动。",
     );
   }
 
@@ -266,6 +222,7 @@ export async function login(input: LoginInput): Promise<AuthSession> {
     accessToken: response.data.access_token,
     user: toPublicUser(response.data.user),
   };
+
   persistSession(session);
   return session;
 }
@@ -314,6 +271,7 @@ export async function registerAccount(input: RegisterInput): Promise<AuthSession
     accessToken: response.data.access_token,
     user: toPublicUser(response.data.user),
   };
+
   persistSession(session);
   return session;
 }
@@ -338,6 +296,7 @@ export async function getCurrentUser(): Promise<AuthenticatedUser> {
     ...session,
     user: toPublicUser(response.data),
   };
+
   persistSession(nextSession);
   return nextSession.user;
 }
@@ -352,4 +311,7 @@ export async function requestPasswordReset(email: string) {
       "请输入邮箱地址，系统才能发起找回密码流程。",
     );
   }
+
+  // 当前项目还没有接入真实的“忘记密码”接口。
+  // 这里先保留参数校验与函数入口，后续接接口时只需要补充请求即可。
 }

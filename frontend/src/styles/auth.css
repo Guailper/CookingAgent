@@ -1,64 +1,7 @@
-@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap");
-
-:root {
-  color-scheme: light;
-  --page-bg: #f3f6fb;
-  --card-bg: rgba(255, 255, 255, 0.94);
-  --card-border: rgba(255, 255, 255, 0.9);
-  --text: #2d3340;
-  --muted: #8b93a3;
-  --muted-strong: #647083;
-  --input-bg: #eef1f7;
-  --input-focus: #e7edf8;
-  --line: rgba(197, 207, 223, 0.75);
-  --primary: #355786;
-  --primary-strong: #29466d;
-  --primary-soft: rgba(53, 87, 134, 0.1);
-  --info-soft: rgba(53, 87, 134, 0.08);
-  --success-soft: rgba(40, 138, 96, 0.1);
-  --error-soft: rgba(197, 92, 92, 0.1);
-  --shadow-card: 0 28px 80px rgba(107, 128, 157, 0.18);
-  --shadow-button: 0 12px 22px rgba(53, 87, 134, 0.26);
-}
-
-* {
-  box-sizing: border-box;
-}
-
-html,
-body,
-#root {
-  min-height: 100%;
-}
-
-body {
-  margin: 0;
-  font-family: "Manrope", "Segoe UI", sans-serif;
-  color: var(--text);
-  background:
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.96), transparent 32%),
-    linear-gradient(180deg, #f7f9fd 0%, #eef3fa 100%);
-}
-
-button,
-input {
-  font: inherit;
-}
-
-button {
-  cursor: pointer;
-}
-
-svg {
-  width: 1rem;
-  height: 1rem;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  flex: 0 0 auto;
-}
+/*
+ * 认证页专属样式放在这里。
+ * 后续如果增加聊天页、设计页，可以继续新增 chat.css / design.css。
+ */
 
 .auth-page {
   position: relative;
@@ -428,15 +371,5 @@ svg {
   .field-row {
     align-items: flex-start;
     flex-direction: column;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation: none !important;
-    transition: none !important;
-    scroll-behavior: auto !important;
   }
 }
