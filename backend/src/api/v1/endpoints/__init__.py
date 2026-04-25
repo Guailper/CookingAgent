@@ -1,5 +1,5 @@
-"""v1 接口端点集合。"""
+"""v1 endpoint exports used by the top-level router."""
 
-from src.api.v1.endpoints import auth, conversations, messages
+from src.api.v1.endpoints import agent, auth, conversations, files, messages, voice
 
-__all__ = ["auth", "conversations", "messages"]
+__all__ = ["agent", "auth", "conversations", "files", "messages", "voice"]

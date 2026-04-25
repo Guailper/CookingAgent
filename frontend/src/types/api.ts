@@ -1,7 +1,6 @@
 /*
- * 这个文件集中定义前后端接口通信会用到的数据结构。
- * 把认证、会话、消息相关的原始接口类型放在一起，方便联调时快速确认字段含义。
- * 页面层和组件层尽量不要直接依赖这些“后端原始结构”，而是交给服务层做二次转换。
+ * Raw API payload types used by the frontend service layer.
+ * Services translate these payloads into the normalized UI-facing models in `types/chat`.
  */
 
 export type ApiErrorResponse = {
@@ -43,10 +42,28 @@ export type ApiConversationItem = {
 };
 
 export type ApiConversationResponse = ApiEnvelope<ApiConversationItem>;
-
 export type ApiConversationDetailResponse = ApiEnvelope<ApiConversationItem>;
-
 export type ApiConversationListResponse = ApiEnvelope<ApiConversationItem[]>;
+
+export type ApiAttachmentItem = {
+  public_id: string;
+  original_name: string;
+  file_ext: string;
+  mime_type: string;
+  file_size: number;
+  attachment_kind: "document" | "image";
+  parse_status: string;
+  created_at: string;
+};
+
+export type ApiAttachmentUploadResponse = ApiEnvelope<ApiAttachmentItem[]>;
+
+export type ApiVoiceTranscriptionResponse = ApiEnvelope<{
+  transcript: string;
+  duration_ms: number | null;
+  mime_type: string;
+  file_size: number;
+}>;
 
 export type ApiMessageItem = {
   public_id: string;
@@ -57,10 +74,31 @@ export type ApiMessageItem = {
   content: string;
   status: string;
   extra_metadata: Record<string, unknown> | unknown[] | null;
+  attachments: ApiAttachmentItem[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type ApiAgentRunItem = {
+  public_id: string;
+  intent_type: string;
+  workflow_name: string;
+  run_status: string;
+  model_name: string | null;
+  input_snapshot: Record<string, unknown> | unknown[] | null;
+  output_snapshot: Record<string, unknown> | unknown[] | null;
+  error_code: string | null;
+  error_message: string | null;
+  started_at: string | null;
+  completed_at: string | null;
   created_at: string;
   updated_at: string;
 };
 
 export type ApiMessageResponse = ApiEnvelope<ApiMessageItem>;
-
 export type ApiMessageListResponse = ApiEnvelope<ApiMessageItem[]>;
+export type ApiAgentChatResponse = ApiEnvelope<{
+  user_message: ApiMessageItem;
+  assistant_message: ApiMessageItem;
+  agent_run: ApiAgentRunItem;
+}>;

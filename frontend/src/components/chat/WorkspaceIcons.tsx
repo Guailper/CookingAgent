@@ -1,6 +1,6 @@
 /*
- * 主界面图标统一放在这里，方便后续做风格统一替换。
- * 这样页面和组件文件不会堆太多 SVG 细节。
+ * Shared workspace SVG icons.
+ * Keeping them in one file makes it easier to update the visual style consistently.
  */
 
 export function PanelToggleIcon() {
@@ -103,6 +103,52 @@ export function GearIcon() {
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="m12 4 1.4 1.6 2.1-.1.7 2 1.9.8-.4 2.1 1.3 1.6-1.3 1.6.4 2.1-1.9.8-.7 2-2.1-.1L12 20l-1.4-1.6-2.1.1-.7-2-1.9-.8.4-2.1L5 12l1.3-1.6-.4-2.1 1.9-.8.7-2 2.1.1Z" />
       <circle cx="12" cy="12" r="2.8" />
+    </svg>
+  );
+}
+
+export function AttachmentIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M15.5 6.5 9 13a3 3 0 0 0 4.2 4.2l7.1-7.1a5 5 0 0 0-7.1-7.1L5.8 10.4a7 7 0 0 0 9.9 9.9l4.1-4.1" />
+    </svg>
+  );
+}
+
+export function MicrophoneIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="9" y="4" width="6" height="10" rx="3" />
+      <path d="M6.5 11.5a5.5 5.5 0 0 0 11 0" />
+      <path d="M12 17v3" />
+      <path d="M9 20h6" />
+    </svg>
+  );
+}
+
+export function StopIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <rect x="9" y="9" width="6" height="6" rx="1.2" />
+    </svg>
+  );
+}
+
+export function CloseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="m7 7 10 10" />
+      <path d="m17 7-10 10" />
+    </svg>
+  );
+}
+
+export function FileIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M8 4h6l4 4v12H8z" />
+      <path d="M14 4v4h4" />
     </svg>
   );
 }

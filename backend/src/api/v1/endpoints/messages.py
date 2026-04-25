@@ -1,8 +1,4 @@
-"""消息接口实现。
-
-当前先支持文本消息的写入和列表读取，后续可以在这里继续接入
-附件上传、多模态消息和 Agent 回复。
-"""
+"""Message endpoints for reading and writing conversation content."""
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
@@ -26,13 +22,20 @@ async def create_message(
     db: Session = Depends(get_db_session),
     current_user=Depends(get_current_user),
 ) -> MessageResponse:
-    """向指定会话发送一条用户消息。"""
+    """Create a text message and bind any uploaded attachments in the same request."""
+
+    extra_metadata = (
+        payload.extra_metadata.model_dump(exclude_none=True)
+        if payload.extra_metadata is not None
+        else None
+    )
 
     message = MessageService(db).create_user_message(
         user=current_user,
         conversation_public_id=conversation_id,
         content=payload.content,
-        message_type=payload.message_type,
+        attachment_public_ids=payload.attachment_ids,
+        extra_metadata=extra_metadata,
     )
     return MessageResponse(
         message="消息发送成功。",
@@ -50,7 +53,7 @@ async def list_messages(
     db: Session = Depends(get_db_session),
     current_user=Depends(get_current_user),
 ) -> MessageListResponse:
-    """返回指定会话下的消息列表。"""
+    """Return all messages for the current user's conversation."""
 
     messages = MessageService(db).list_conversation_messages(
         user=current_user,

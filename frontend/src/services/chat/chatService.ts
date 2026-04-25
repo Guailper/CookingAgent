@@ -1,12 +1,14 @@
 /*
- * 这个服务文件负责两类事情：
- * 1. 把主界面的会话与消息请求真正接到 FastAPI 后端
- * 2. 保留主界面里仍然属于前端增强层的内容，例如推荐气泡、设置菜单和搜索结果整理
- *
- * 这样拆分以后，hooks 和组件层不需要直接关心后端接口字段，只消费这里整理好的前端结构。
+ * Chat service layer:
+ * 1. Talks to the backend conversation, message, attachment, and voice APIs.
+ * 2. Normalizes raw API payloads into UI-friendly frontend models.
+ * 3. Keeps lightweight workspace-only helpers such as prompt suggestions and local search.
  */
 
 import type {
+  ApiAgentChatResponse,
+  ApiAttachmentItem,
+  ApiAttachmentUploadResponse,
   ApiConversationDetailResponse,
   ApiConversationItem,
   ApiConversationListResponse,
@@ -14,12 +16,15 @@ import type {
   ApiErrorResponse,
   ApiMessageItem,
   ApiMessageListResponse,
-  ApiMessageResponse,
+  ApiVoiceTranscriptionResponse,
 } from "../../types";
 import type {
+  ChatAttachment,
+  ChatAttachmentKind,
   ChatConversation,
   ChatMessage,
   ChatMessageRole,
+  PendingAttachment,
   PromptSuggestion,
   SettingsMenuItem,
   WorkspaceSearchResult,
@@ -27,7 +32,34 @@ import type {
 import { getStoredSession } from "../auth";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "/api/v1").replace(/\/$/, "");
-const TEXT_MESSAGE_TYPE = "text";
+const MAX_COMPOSER_ATTACHMENTS = 5;
+const MAX_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
+const DEFAULT_VOICE_UPLOAD_FILENAME = "voice-input.webm";
+
+const SUPPORTED_ATTACHMENT_EXTENSIONS = new Set([
+  ".pdf",
+  ".doc",
+  ".docx",
+  ".ppt",
+  ".pptx",
+  ".txt",
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".webp",
+]);
+
+const VOICE_UPLOAD_EXTENSION_BY_MIME_TYPE: Array<[string, string]> = [
+  ["audio/webm", ".webm"],
+  ["audio/wav", ".wav"],
+  ["audio/wave", ".wav"],
+  ["audio/x-wav", ".wav"],
+  ["audio/mpeg", ".mp3"],
+  ["audio/mp3", ".mp3"],
+  ["audio/mp4", ".m4a"],
+  ["audio/m4a", ".m4a"],
+  ["audio/x-m4a", ".m4a"],
+];
 
 export class ChatServiceError extends Error {
   constructor(
@@ -42,6 +74,28 @@ export class ChatServiceError extends Error {
 
 function normalizeKeyword(value: string) {
   return value.trim().toLocaleLowerCase();
+}
+
+function getFileExtension(fileName: string) {
+  const lastDotIndex = fileName.lastIndexOf(".");
+  return lastDotIndex >= 0 ? fileName.slice(lastDotIndex).toLocaleLowerCase() : "";
+}
+
+function resolveVoiceUploadFilename(audioBlob: Blob) {
+  const normalizedMimeType = audioBlob.type.toLocaleLowerCase();
+  const matchedExtension = VOICE_UPLOAD_EXTENSION_BY_MIME_TYPE.find(([mimeType]) =>
+    normalizedMimeType.startsWith(mimeType),
+  )?.[1];
+
+  return `voice-input${matchedExtension ?? getFileExtension(DEFAULT_VOICE_UPLOAD_FILENAME)}`;
+}
+
+function createLocalId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return `pending-${crypto.randomUUID()}`;
+  }
+
+  return `pending-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function formatMessageTime(value: string) {
@@ -70,13 +124,29 @@ function summarizeContent(content: string) {
   return `${normalizedContent.slice(0, 28)}...`;
 }
 
+function summarizeMessage(message: ChatMessage) {
+  if (message.content.trim()) {
+    return summarizeContent(message.content);
+  }
+
+  if (message.attachments.length === 1) {
+    return `已附带文件：${message.attachments[0].name}`;
+  }
+
+  if (message.attachments.length > 1) {
+    return `已附带 ${message.attachments.length} 个文件`;
+  }
+
+  return "新的消息";
+}
+
 function createConversationSummary(
   conversation: ApiConversationItem,
   messages: ChatMessage[],
   hasLoadedMessages: boolean,
 ) {
   if (messages.length > 0) {
-    return summarizeContent(messages[messages.length - 1].content);
+    return summarizeMessage(messages[messages.length - 1]);
   }
 
   if (hasLoadedMessages) {
@@ -102,6 +172,18 @@ function toChatMessageRole(role: string): ChatMessageRole {
   return "user";
 }
 
+function mapApiAttachment(item: ApiAttachmentItem): ChatAttachment {
+  return {
+    id: item.public_id,
+    name: item.original_name,
+    extension: item.file_ext,
+    mimeType: item.mime_type,
+    size: item.file_size,
+    kind: item.attachment_kind,
+    parseStatus: item.parse_status,
+  };
+}
+
 function mapApiMessage(item: ApiMessageItem): ChatMessage {
   return {
     id: item.public_id,
@@ -110,6 +192,11 @@ function mapApiMessage(item: ApiMessageItem): ChatMessage {
     createdAt: formatMessageTime(item.created_at),
     status: item.status,
     messageType: item.message_type,
+    attachments: item.attachments.map(mapApiAttachment),
+    extraMetadata:
+      item.extra_metadata && !Array.isArray(item.extra_metadata)
+        ? (item.extra_metadata as Record<string, unknown>)
+        : null,
   };
 }
 
@@ -133,7 +220,7 @@ function mapApiConversation(
   };
 }
 
-function getAuthHeaders() {
+function getAuthorizationHeaders() {
   const session = getStoredSession();
 
   if (!session?.accessToken) {
@@ -145,8 +232,14 @@ function getAuthHeaders() {
   }
 
   return {
-    "Content-Type": "application/json",
     Authorization: `Bearer ${session.accessToken}`,
+  };
+}
+
+function getJsonAuthHeaders() {
+  return {
+    "Content-Type": "application/json",
+    ...getAuthorizationHeaders(),
   };
 }
 
@@ -177,9 +270,44 @@ function toChatServiceError(
     case "EMPTY_MESSAGE_CONTENT":
       return new ChatServiceError(
         code,
-        "消息内容不能为空",
-        "请输入内容后再发送消息。",
+        "消息不能为空",
+        "请输入内容或添加附件后再发送消息。",
       );
+    case "ATTACHMENT_LIMIT_EXCEEDED":
+      return new ChatServiceError(code, "附件数量超出限制", backendMessage);
+    case "ATTACHMENT_NOT_FOUND":
+      return new ChatServiceError(code, "附件不存在", backendMessage);
+    case "ATTACHMENT_ALREADY_BOUND":
+      return new ChatServiceError(code, "附件已绑定消息", backendMessage);
+    case "ATTACHMENT_REQUIRED":
+      return new ChatServiceError(code, "缺少附件", backendMessage);
+    case "EMPTY_FILE":
+      return new ChatServiceError(code, "文件内容为空", backendMessage);
+    case "UNSUPPORTED_FILE_TYPE":
+      return new ChatServiceError(code, "文件类型不支持", backendMessage);
+    case "UNSUPPORTED_AUDIO_TYPE":
+      return new ChatServiceError(code, "语音格式不支持", backendMessage);
+    case "EMPTY_AUDIO_FILE":
+      return new ChatServiceError(code, "未检测到语音内容", backendMessage);
+    case "FILE_TOO_LARGE":
+    case "AUDIO_FILE_TOO_LARGE":
+      return new ChatServiceError(code, "文件过大", backendMessage);
+    case "AUDIO_DURATION_EXCEEDED":
+      return new ChatServiceError(code, "语音时长过长", backendMessage);
+    case "VOICE_TRANSCRIBE_NOT_CONFIGURED":
+      return new ChatServiceError(code, "语音转写未配置", backendMessage);
+    case "VOICE_TRANSCRIBE_LOCAL_DEPENDENCY_MISSING":
+      return new ChatServiceError(code, "本地语音依赖未安装", backendMessage);
+    case "VOICE_TRANSCRIBE_LOCAL_MODEL_LOAD_FAILED":
+      return new ChatServiceError(code, "本地语音模型加载失败", backendMessage);
+    case "VOICE_TRANSCRIBE_LOCAL_RUNTIME_FAILED":
+      return new ChatServiceError(code, "本地语音转写失败", backendMessage);
+    case "VOICE_TRANSCRIBE_PROVIDER_UNSUPPORTED":
+    case "VOICE_TRANSCRIBE_UPSTREAM_FAILED":
+    case "VOICE_TRANSCRIBE_UPSTREAM_UNAVAILABLE":
+    case "VOICE_TRANSCRIBE_INVALID_RESPONSE":
+    case "VOICE_TRANSCRIBE_EMPTY_RESULT":
+      return new ChatServiceError(code, "语音转写失败", backendMessage);
     default:
       return new ChatServiceError(
         code,
@@ -198,7 +326,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ChatServiceError(
       "network_error",
       "无法连接后端服务",
-      "当前无法连接到后端服务，请确认 FastAPI 服务已经正常启动。",
+      "当前无法连接到后端服务，请确认前后端都已经正常启动。",
     );
   }
 
@@ -221,6 +349,9 @@ function buildConversationSearchResults(
         conversation.title,
         conversation.summary,
         ...conversation.messages.map((message) => message.content),
+        ...conversation.messages.flatMap((message) =>
+          message.attachments.map((attachment) => attachment.name),
+        ),
       ]
         .join(" ")
         .toLocaleLowerCase();
@@ -268,6 +399,71 @@ export function isChatSessionError(error: unknown) {
   );
 }
 
+export function formatAttachmentSize(size: number) {
+  if (size < 1024) {
+    return `${size} B`;
+  }
+
+  if (size < 1024 * 1024) {
+    return `${(size / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export function resolveLocalAttachmentKind(file: File): ChatAttachmentKind {
+  const extension = getFileExtension(file.name);
+
+  if ([".jpg", ".jpeg", ".png", ".webp"].includes(extension) || file.type.startsWith("image/")) {
+    return "image";
+  }
+
+  return "document";
+}
+
+export function createPendingAttachment(file: File): PendingAttachment {
+  return {
+    localId: createLocalId(),
+    file,
+    name: file.name,
+    mimeType: file.type || "application/octet-stream",
+    size: file.size,
+    kind: resolveLocalAttachmentKind(file),
+    status: "pending",
+    uploadedId: null,
+  };
+}
+
+export function validateAttachmentSelection(files: File[], existingCount: number) {
+  if (existingCount + files.length > MAX_COMPOSER_ATTACHMENTS) {
+    throw new ChatServiceError(
+      "ATTACHMENT_LIMIT_EXCEEDED",
+      "附件数量超出限制",
+      `单条消息最多上传 ${MAX_COMPOSER_ATTACHMENTS} 个附件。`,
+    );
+  }
+
+  for (const file of files) {
+    const extension = getFileExtension(file.name);
+
+    if (!SUPPORTED_ATTACHMENT_EXTENSIONS.has(extension)) {
+      throw new ChatServiceError(
+        "UNSUPPORTED_FILE_TYPE",
+        "文件类型不支持",
+        "当前仅支持 PDF、Office 文档、TXT，以及常见图片格式。",
+      );
+    }
+
+    if (file.size > MAX_ATTACHMENT_SIZE_BYTES) {
+      throw new ChatServiceError(
+        "FILE_TOO_LARGE",
+        "文件过大",
+        `文件“${file.name}”超过 10MB 限制。`,
+      );
+    }
+  }
+}
+
 export function buildConversationTitle(prompt: string) {
   const trimmed = prompt.trim();
 
@@ -282,23 +478,34 @@ export function mergeMessageIntoConversation(
   conversation: ChatConversation,
   message: ChatMessage,
 ): ChatConversation {
-  const nextMessages = [...conversation.messages, message];
+  return mergeMessagesIntoConversation(conversation, [message]);
+}
+
+export function mergeMessagesIntoConversation(
+  conversation: ChatConversation,
+  messages: ChatMessage[],
+): ChatConversation {
+  if (messages.length === 0) {
+    return conversation;
+  }
+
   const latestMessageAt = new Date().toISOString();
+  const latestMessage = messages[messages.length - 1];
 
   return {
     ...conversation,
-    summary: summarizeContent(message.content),
+    summary: summarizeMessage(latestMessage),
     updatedAt: formatConversationTime(latestMessageAt),
     latestMessageAt,
     hasLoadedMessages: true,
-    messages: nextMessages,
+    messages: [...conversation.messages, ...messages],
   };
 }
 
 export async function listRemoteConversations(): Promise<ChatConversation[]> {
   const response = await requestJson<ApiConversationListResponse>("/conversations", {
     method: "GET",
-    headers: getAuthHeaders(),
+    headers: getJsonAuthHeaders(),
   });
 
   return response.data.map((conversation) => mapApiConversation(conversation));
@@ -308,11 +515,11 @@ export async function getRemoteConversation(conversationId: string): Promise<Cha
   const [conversationResponse, messagesResponse] = await Promise.all([
     requestJson<ApiConversationDetailResponse>(`/conversations/${conversationId}`, {
       method: "GET",
-      headers: getAuthHeaders(),
+      headers: getJsonAuthHeaders(),
     }),
     requestJson<ApiMessageListResponse>(`/conversations/${conversationId}/messages`, {
       method: "GET",
-      headers: getAuthHeaders(),
+      headers: getJsonAuthHeaders(),
     }),
   ]);
 
@@ -324,38 +531,100 @@ export async function getRemoteConversation(conversationId: string): Promise<Cha
 export async function createRemoteConversation(title: string): Promise<ChatConversation> {
   const response = await requestJson<ApiConversationResponse>("/conversations", {
     method: "POST",
-    headers: getAuthHeaders(),
+    headers: getJsonAuthHeaders(),
     body: JSON.stringify({ title: title.trim() || "新的美食灵感" }),
   });
 
-  // 新建会话刚创建时还没有消息，因此直接标记为已加载空消息列表。
   return mapApiConversation(response.data, [], true);
 }
 
-export async function sendRemoteMessage(
+export async function uploadConversationAttachments(
   conversationId: string,
-  content: string,
-): Promise<ChatMessage> {
-  const normalizedContent = content.trim();
+  files: File[],
+): Promise<ChatAttachment[]> {
+  const formData = new FormData();
 
-  if (!normalizedContent) {
+  for (const file of files) {
+    formData.append("files", file, file.name);
+  }
+
+  const response = await requestJson<ApiAttachmentUploadResponse>(
+    `/conversations/${conversationId}/attachments`,
+    {
+      method: "POST",
+      headers: getAuthorizationHeaders(),
+      body: formData,
+    },
+  );
+
+  return response.data.map(mapApiAttachment);
+}
+
+export async function removeRemoteAttachment(attachmentId: string) {
+  await requestJson<{ message: string }>(`/attachments/${attachmentId}`, {
+    method: "DELETE",
+    headers: getAuthorizationHeaders(),
+  });
+}
+
+export async function transcribeVoiceToText(audioBlob: Blob) {
+  const formData = new FormData();
+  formData.append("file", audioBlob, resolveVoiceUploadFilename(audioBlob));
+  formData.append("language", "zh");
+
+  const response = await requestJson<ApiVoiceTranscriptionResponse>("/voice/transcriptions", {
+    method: "POST",
+    headers: getAuthorizationHeaders(),
+    body: formData,
+  });
+
+  return {
+    transcript: response.data.transcript,
+    durationMs: response.data.duration_ms,
+    mimeType: response.data.mime_type,
+    fileSize: response.data.file_size,
+  };
+}
+
+type SendRemoteMessageOptions = {
+  content: string;
+  attachmentIds?: string[];
+  extraMetadata?: Record<string, unknown>;
+};
+
+export async function sendAgentMessage(
+  conversationId: string,
+  options: SendRemoteMessageOptions,
+): Promise<{
+  userMessage: ChatMessage;
+  assistantMessage: ChatMessage;
+}> {
+  const normalizedContent = options.content.trim();
+  const normalizedAttachmentIds = (options.attachmentIds ?? []).filter(Boolean);
+
+  if (!normalizedContent && normalizedAttachmentIds.length === 0) {
     throw new ChatServiceError(
       "EMPTY_MESSAGE_CONTENT",
-      "消息内容不能为空",
-      "请输入内容后再发送消息。",
+      "消息不能为空",
+      "请输入内容或添加附件后再发送消息。",
     );
   }
 
-  const response = await requestJson<ApiMessageResponse>(`/conversations/${conversationId}/messages`, {
+  const response = await requestJson<ApiAgentChatResponse>("/agent/chat", {
     method: "POST",
-    headers: getAuthHeaders(),
+    headers: getJsonAuthHeaders(),
     body: JSON.stringify({
+      conversation_id: conversationId,
       content: normalizedContent,
-      message_type: TEXT_MESSAGE_TYPE,
+      attachment_ids: normalizedAttachmentIds,
+      extra_metadata: options.extraMetadata ?? null,
     }),
   });
 
-  return mapApiMessage(response.data);
+  return {
+    userMessage: mapApiMessage(response.data.user_message),
+    assistantMessage: mapApiMessage(response.data.assistant_message),
+  };
 }
 
 export function createPromptSuggestions(): PromptSuggestion[] {

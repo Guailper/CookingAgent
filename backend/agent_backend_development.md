@@ -46,6 +46,7 @@
 
 - 用户注册与登录
 - 创建会话与发送消息
+- 语音输入转写
 - 上传文件和图片
 - 解析 PDF / Word / PPT / 图片
 - OCR 提取图片文字
@@ -608,6 +609,7 @@
 - 注册登录
 - 会话创建
 - 消息发送
+- 语音转写
 - 文件上传
 - PDF 解析
 - OCR
@@ -706,3 +708,163 @@
 - MySQL 数据库表结构设计文档
 
 这样你就可以直接进入建表和写接口阶段。
+
+## 15. 语音输入与文件上传接入设计
+
+### 15.1 设计目标
+
+- 在不破坏现有纯文本消息主链路的前提下，补齐“语音转文字输入”和“消息附件上传”。
+- 语音能力本轮只做转写，不做语音播放、语音播报和实时流式通话。
+- 文件上传能力本轮只服务于聊天消息，不单独扩展成资料库或附件中心。
+
+### 15.2 建议调整的数据结构
+
+- `backend/src/schemas/message.py`
+  - 为创建消息请求增加 `attachment_ids`
+  - 为创建消息请求增加 `extra_metadata`
+- `backend/src/db/models/attachment.py`
+  - 建议把 `message_id` 调整为“上传成功后可暂时为空，消息发送成功后再绑定”
+  - 建议增加 `attachment_kind`，便于区分 `document | image`
+- `backend/src/db/models/message.py`
+  - 保持 `message_type=text` 作为默认值
+  - 通过 `extra_metadata.input_source` 标记本条消息来自 `keyboard` 还是 `voice`
+- `backend/src/core/constants.py`
+  - 增加允许上传的文档格式、图片格式、音频格式常量
+  - 增加附件数量与大小限制常量
+
+### 15.3 建议新增或扩展的后端文件
+
+- `backend/src/api/v1/endpoints/messages.py`
+  - 扩展消息创建接口，接收 `attachment_ids` 和 `extra_metadata`
+- `backend/src/api/v1/endpoints/files.py`
+  - 新增附件上传与附件删除接口
+- `backend/src/api/v1/endpoints/voice.py`
+  - 新增语音转写接口
+- `backend/src/schemas/file.py`
+  - 新增附件上传请求/响应模型
+- `backend/src/schemas/voice.py`
+  - 新增语音转写响应模型
+- `backend/src/services/message_service.py`
+  - 在创建消息后绑定 `attachment_ids`
+  - 保证“消息创建 + 附件绑定”在一个事务内完成
+- `backend/src/services/file_service.py`
+  - 负责文件校验、命名、落盘、返回附件元数据
+- `backend/src/services/voice_service.py`
+  - 负责音频校验、调用语音转写能力、返回文本
+- `backend/src/repositories/attachment_repository.py`
+  - 新增附件查询、创建、删除、绑定方法
+- `backend/src/core/config.py`
+  - 增加 `MAX_UPLOAD_SIZE_MB`
+  - 增加 `MAX_AUDIO_SIZE_MB`
+  - 增加 `MAX_AUDIO_DURATION_SECONDS`
+  - 增加 `VOICE_TRANSCRIBE_PROVIDER`
+  - 增加 `VOICE_TRANSCRIBE_API_KEY`
+
+### 15.4 推荐接口设计
+
+#### 15.4.1 语音转写接口
+
+```text
+POST /api/v1/voice/transcriptions
+Content-Type: multipart/form-data
+
+fields:
+- file
+- language
+```
+
+作用：
+
+- 校验音频格式、大小、时长
+- 调用语音转写服务
+- 返回转写文本，不直接创建消息
+
+#### 15.4.2 附件上传接口
+
+```text
+POST /api/v1/conversations/{conversation_id}/attachments
+Content-Type: multipart/form-data
+
+fields:
+- files[]
+```
+
+作用：
+
+- 校验文档/图片格式与大小
+- 生成附件记录
+- 保存到本地存储或对象存储
+- 返回 `attachment_ids`
+
+#### 15.4.3 消息发送接口
+
+```json
+{
+  "content": "请根据这些文件帮我总结重点",
+  "message_type": "text",
+  "attachment_ids": ["att_001", "att_002"],
+  "extra_metadata": {
+    "input_source": "voice"
+  }
+}
+```
+
+作用：
+
+- 保持现有文本消息链路不变
+- 仅扩展“绑定附件”和“标记输入来源”能力
+
+### 15.5 推荐服务编排流程
+
+#### 15.5.1 语音输入流程
+
+1. 前端把录音文件发送到 `POST /api/v1/voice/transcriptions`
+2. `voice_service.py` 校验文件并调用转写能力
+3. 后端返回 `transcript`
+4. 前端把文本写入输入框
+5. 用户确认后再走现有消息发送接口
+
+#### 15.5.2 文件上传并发送消息流程
+
+1. 前端本地暂存待发送附件
+2. 用户点击发送时，如果没有会话则先创建会话
+3. 前端调用附件上传接口，拿到 `attachment_ids`
+4. 前端调用消息接口，传入正文和 `attachment_ids`
+5. `message_service.py` 创建消息后绑定附件
+6. 后续解析、OCR、Agent 工作流继续复用已有附件与解析链路
+
+### 15.6 事务与错误处理要求
+
+- 附件上传成功但消息发送失败时，前端应收到可重试的错误信息。
+- 消息创建成功但附件绑定失败时，后端必须回滚事务，避免出现“消息成功、附件丢失”的半完成状态。
+- 删除附件接口只允许删除“尚未绑定正式消息”的附件。
+- 语音转写失败时不写消息表、不写附件表，直接返回标准错误响应。
+
+### 15.7 建议补充的测试
+
+- `backend/src/tests/test_files.py`
+  - 上传合法文档
+  - 上传非法扩展名
+  - 删除未绑定附件
+- `backend/src/tests/test_messages.py`
+  - 创建带 `attachment_ids` 的消息
+  - 附件归属校验
+- `backend/src/tests/test_voice.py`
+  - 上传合法音频并返回转写文本
+  - 上传非法音频格式
+  - 上传超出大小限制的音频
+
+### 15.8 推荐开发顺序
+
+1. 先补 `schemas/message.py`、`db/models/attachment.py`、`core/constants.py`、`core/config.py`
+2. 再补 `files.py`、`file_service.py`、`attachment_repository.py`
+3. 再补 `messages.py` 和 `message_service.py` 的附件绑定逻辑
+4. 再补 `voice.py` 和 `voice_service.py`
+5. 最后补接口测试和异常路径测试
+
+### 15.9 本轮不实现的内容
+
+- 助手语音播报
+- 音频消息播放器
+- 实时流式语音通话
+- 附件跨消息复用

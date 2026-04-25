@@ -1,4 +1,4 @@
-"""消息表 ORM 模型。"""
+"""Chat message ORM model."""
 
 from datetime import datetime
 from typing import Optional
@@ -7,14 +7,14 @@ from sqlalchemy import JSON, ForeignKey, Index, String, text
 from sqlalchemy.dialects.mysql import BIGINT, DATETIME, LONGTEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from src.core.constants import MESSAGE_STATUS_COMPLETED, MESSAGE_TYPE_TEXT
 from src.db.base import Base
 
 
 class Message(Base):
-    """消息实体，负责保存会话中的文本、多模态和系统消息。"""
+    """Store user, assistant, and system messages inside a conversation."""
 
     __tablename__ = "messages"
-    # 这里对齐了消息表的查询索引，方便按会话、角色和消息类型检索。
     __table_args__ = (
         Index("idx_messages_conversation_created", "conversation_id", "created_at"),
         Index("idx_messages_user_id", "user_id"),
@@ -28,7 +28,6 @@ class Message(Base):
         },
     )
 
-    # 主键和外键字段。
     id: Mapped[int] = mapped_column(
         BIGINT(unsigned=True),
         primary_key=True,
@@ -54,7 +53,6 @@ class Message(Base):
         comment="sender user id",
     )
 
-    # 消息主体字段。
     role: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
@@ -63,20 +61,24 @@ class Message(Base):
     message_type: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
-        default="text",
-        server_default=text("'text'"),
+        default=MESSAGE_TYPE_TEXT,
+        server_default=text(f"'{MESSAGE_TYPE_TEXT}'"),
         comment="message type",
     )
+    # LONGTEXT allows long transcripts and attachment-related summaries later on.
+    # Voice input is persisted as transcribed text rather than raw audio.
     content: Mapped[str] = mapped_column(
         LONGTEXT,
         nullable=False,
+        default="",
+        server_default=text("''"),
         comment="message content",
     )
     status: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
-        default="completed",
-        server_default=text("'completed'"),
+        default=MESSAGE_STATUS_COMPLETED,
+        server_default=text(f"'{MESSAGE_STATUS_COMPLETED}'"),
         comment="message status",
     )
     extra_metadata: Mapped[dict | list | None] = mapped_column(
@@ -85,7 +87,6 @@ class Message(Base):
         comment="extra metadata",
     )
 
-    # 审计字段：记录消息创建与更新时间。
     created_at: Mapped[datetime] = mapped_column(
         DATETIME(fsp=3),
         nullable=False,
@@ -100,7 +101,6 @@ class Message(Base):
         comment="updated time",
     )
 
-    # ORM 关系：一条消息属于一个会话，可选关联一个用户，并可挂多个附件。
     conversation: Mapped["Conversation"] = relationship(
         "Conversation",
         back_populates="messages",

@@ -1,29 +1,39 @@
 /*
- * 这个 Hook 统一管理主界面的交互状态。
- * 这一版已经把会话列表、会话详情和消息发送接到了后端接口，
- * 同时继续保留搜索、推荐气泡和设置菜单这类更偏前端体验层的交互逻辑。
+ * This hook centralizes the chat workspace state.
+ * It now coordinates four linked chains:
+ * 1. Loading conversations and messages.
+ * 2. Creating conversations and sending messages.
+ * 3. Uploading pending attachments before message submission.
+ * 4. Sending recorded audio to the backend and writing the transcript back into the draft.
  */
 
 import { useEffect, useState } from "react";
 import {
   ChatServiceError,
   buildConversationTitle,
+  createPendingAttachment,
   createPromptSuggestions,
   createRemoteConversation,
   createSettingsMenuItems,
   getRemoteConversation,
   isChatSessionError,
   listRemoteConversations,
-  mergeMessageIntoConversation,
+  mergeMessagesIntoConversation,
+  removeRemoteAttachment,
   searchWorkspaceContent,
-  sendRemoteMessage,
+  sendAgentMessage,
+  transcribeVoiceToText,
+  uploadConversationAttachments,
+  validateAttachmentSelection,
 } from "../../services";
 import type {
   AuthenticatedUser,
   ChatConversation,
   Notice,
+  PendingAttachment,
   PromptSuggestion,
   SettingsView,
+  VoiceComposerState,
   WorkspaceSearchResult,
 } from "../../types";
 
@@ -65,48 +75,29 @@ function upsertConversation(
 }
 
 export function useWorkspace({ user, onUnauthorized }: UseWorkspaceOptions) {
-  // 控制左侧菜单栏是否处于展开状态。
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-
-  // 控制设置按钮旁的弹出菜单是否显示。
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
-
-  // 记录当前正在查看的设置面板内容。
   const [activeSettingsView, setActiveSettingsView] = useState<SettingsView | null>(null);
-
-  // 主界面的最近对话列表来自后端，会在进入页面后自动加载。
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
-
-  // 记录当前打开的是哪一段会话；为空表示正在“新对话”欢迎态。
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
-
-  // 输入框中的草稿内容。
   const [draft, setDraft] = useState("");
-
-  // 顶部搜索框的输入内容。
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
+  const [draftInputSource, setDraftInputSource] = useState<"keyboard" | "voice">("keyboard");
+  const [voiceComposerState, setVoiceComposerState] = useState<VoiceComposerState>("idle");
+  const [voiceError, setVoiceError] = useState<string | null>(null);
   const [searchKeyword, setSearchKeyword] = useState("");
-
-  // 控制搜索结果面板是否展开。
   const [isSearchMenuOpen, setIsSearchMenuOpen] = useState(false);
-
-  // 用来向用户展示“会话加载失败”“消息发送失败”等后端请求错误。
   const [workspaceNotice, setWorkspaceNotice] = useState<Notice | null>(null);
-
-  // 防止初始化阶段和发送消息阶段重复触发请求。
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [isUploadingAttachments, setIsUploadingAttachments] = useState(false);
 
-  // 设置菜单项先保留静态配置，后续可以继续扩展。
   const settingsMenuItems = createSettingsMenuItems();
-
-  // 推荐气泡仍然保留在前端层，作为新对话的快捷入口。
   const promptSuggestions = createPromptSuggestions();
 
-  // 根据当前激活的会话 id 找到对应会话数据。
   const activeConversation =
     conversations.find((conversation) => conversation.id === activeConversationId) ?? null;
 
-  // 搜索结果会同时查询历史会话和推荐气泡，帮助用户快速跳转。
   const searchResults = searchWorkspaceContent(searchKeyword, conversations, promptSuggestions);
 
   useEffect(() => {
@@ -147,7 +138,7 @@ export function useWorkspace({ user, onUnauthorized }: UseWorkspaceOptions) {
     return () => {
       isMounted = false;
     };
-  }, [user.publicId]);
+  }, [user.publicId, onUnauthorized]);
 
   function toggleSidebar() {
     setIsSidebarOpen((currentState) => !currentState);
@@ -190,7 +181,36 @@ export function useWorkspace({ user, onUnauthorized }: UseWorkspaceOptions) {
     setIsSearchMenuOpen(false);
   }
 
+  function clearComposerState() {
+    setDraft("");
+    setPendingAttachments([]);
+    setDraftInputSource("keyboard");
+    setVoiceComposerState("idle");
+    setVoiceError(null);
+  }
+
+  async function cleanupPendingRemoteAttachments(attachments: PendingAttachment[]) {
+    const uploadedAttachmentIds = attachments
+      .map((attachment) => attachment.uploadedId)
+      .filter((attachmentId): attachmentId is string => Boolean(attachmentId));
+
+    await Promise.allSettled(
+      uploadedAttachmentIds.map((attachmentId) => removeRemoteAttachment(attachmentId)),
+    );
+  }
+
+  function resetComposerState() {
+    const attachmentsSnapshot = pendingAttachments;
+
+    if (attachmentsSnapshot.some((attachment) => attachment.uploadedId)) {
+      void cleanupPendingRemoteAttachments(attachmentsSnapshot);
+    }
+
+    clearComposerState();
+  }
+
   async function openConversation(conversationId: string) {
+    resetComposerState();
     setActiveConversationId(conversationId);
     setWorkspaceNotice(null);
 
@@ -221,16 +241,97 @@ export function useWorkspace({ user, onUnauthorized }: UseWorkspaceOptions) {
   }
 
   function startNewConversation() {
+    resetComposerState();
     setActiveConversationId(null);
-    setDraft("");
     setWorkspaceNotice(null);
     clearSearch();
   }
 
+  function updateDraft(nextDraft: string) {
+    setDraft(nextDraft);
+
+    if (!nextDraft.trim()) {
+      setDraftInputSource("keyboard");
+    }
+  }
+
+  function addPendingFiles(fileList: FileList | File[]) {
+    const files = Array.from(fileList);
+    if (files.length === 0) {
+      return;
+    }
+
+    try {
+      validateAttachmentSelection(files, pendingAttachments.length);
+      setPendingAttachments((currentAttachments) => [
+        ...currentAttachments,
+        ...files.map(createPendingAttachment),
+      ]);
+      setWorkspaceNotice(null);
+    } catch (error) {
+      setWorkspaceNotice(toWorkspaceNotice(error));
+    }
+  }
+
+  function removePendingFile(localId: string) {
+    const targetAttachment = pendingAttachments.find((attachment) => attachment.localId === localId);
+    if (!targetAttachment) {
+      return;
+    }
+
+    setPendingAttachments((currentAttachments) =>
+      currentAttachments.filter((attachment) => attachment.localId !== localId),
+    );
+
+    if (targetAttachment.uploadedId) {
+      void removeRemoteAttachment(targetAttachment.uploadedId).catch((error: unknown) => {
+        setWorkspaceNotice(toWorkspaceNotice(error));
+      });
+    }
+  }
+
+  function handleVoiceRecordingChange(isRecording: boolean) {
+    setVoiceComposerState(isRecording ? "recording" : "idle");
+    setVoiceError(null);
+  }
+
+  async function transcribeRecordedAudio(audioBlob: Blob) {
+    setVoiceComposerState("transcribing");
+    setVoiceError(null);
+    setWorkspaceNotice(null);
+
+    try {
+      const result = await transcribeVoiceToText(audioBlob);
+
+      setDraft((currentDraft) =>
+        currentDraft.trim() ? `${currentDraft.trim()} ${result.transcript}` : result.transcript,
+      );
+      setDraftInputSource("voice");
+      setVoiceComposerState("idle");
+    } catch (error) {
+      setVoiceComposerState("error");
+      setVoiceError(
+        error instanceof ChatServiceError ? error.description : "语音转写失败，请稍后重试。",
+      );
+      setWorkspaceNotice(toWorkspaceNotice(error));
+    }
+  }
+
+  function handleVoiceCaptureError(message: string) {
+    setVoiceComposerState("error");
+    setVoiceError(message);
+  }
+
   async function sendMessage(promptFromSuggestion?: string) {
     const nextPrompt = (promptFromSuggestion ?? draft).trim();
+    const hasAttachments = pendingAttachments.length > 0;
 
-    if (!nextPrompt || isSendingMessage) {
+    if (
+      (!nextPrompt && !hasAttachments) ||
+      isSendingMessage ||
+      isUploadingAttachments ||
+      voiceComposerState === "transcribing"
+    ) {
       return;
     }
 
@@ -251,7 +352,54 @@ export function useWorkspace({ user, onUnauthorized }: UseWorkspaceOptions) {
         );
       }
 
-      const nextMessage = await sendRemoteMessage(targetConversationId, nextPrompt);
+      const alreadyUploadedAttachments = pendingAttachments.filter(
+        (attachment) => attachment.uploadedId,
+      );
+      const attachmentsNeedingUpload = pendingAttachments.filter(
+        (attachment) => !attachment.uploadedId,
+      );
+
+      let attachmentIds = alreadyUploadedAttachments
+        .map((attachment) => attachment.uploadedId)
+        .filter((attachmentId): attachmentId is string => Boolean(attachmentId));
+
+      if (attachmentsNeedingUpload.length > 0) {
+        setIsUploadingAttachments(true);
+
+        const uploadedAttachments = await uploadConversationAttachments(
+          targetConversationId,
+          attachmentsNeedingUpload.map((attachment) => attachment.file),
+        );
+
+        attachmentIds = [...attachmentIds, ...uploadedAttachments.map((attachment) => attachment.id)];
+
+        setPendingAttachments((currentAttachments) => {
+          const uploadedByLocalId = new Map(
+            attachmentsNeedingUpload.map((attachment, index) => [
+              attachment.localId,
+              uploadedAttachments[index]?.id ?? null,
+            ]),
+          );
+
+          return currentAttachments.map((attachment) =>
+            uploadedByLocalId.has(attachment.localId)
+              ? {
+                  ...attachment,
+                  status: "uploaded",
+                  uploadedId: uploadedByLocalId.get(attachment.localId) ?? null,
+                }
+              : attachment,
+          );
+        });
+      }
+
+      const { userMessage, assistantMessage } = await sendAgentMessage(targetConversationId, {
+        content: nextPrompt,
+        attachmentIds,
+        extraMetadata: {
+          input_source: draftInputSource,
+        },
+      });
 
       setConversations((currentConversations) => {
         const currentConversation =
@@ -262,12 +410,15 @@ export function useWorkspace({ user, onUnauthorized }: UseWorkspaceOptions) {
           return currentConversations;
         }
 
-        const nextConversation = mergeMessageIntoConversation(currentConversation, nextMessage);
+        const nextConversation = mergeMessagesIntoConversation(currentConversation, [
+          userMessage,
+          assistantMessage,
+        ]);
 
         return upsertConversation(currentConversations, nextConversation, true);
       });
 
-      setDraft("");
+      clearComposerState();
       clearSearch();
     } catch (error) {
       if (isChatSessionError(error)) {
@@ -278,6 +429,7 @@ export function useWorkspace({ user, onUnauthorized }: UseWorkspaceOptions) {
       setWorkspaceNotice(toWorkspaceNotice(error));
     } finally {
       setIsSendingMessage(false);
+      setIsUploadingAttachments(false);
     }
   }
 
@@ -300,6 +452,7 @@ export function useWorkspace({ user, onUnauthorized }: UseWorkspaceOptions) {
   return {
     user,
     draft,
+    pendingAttachments,
     conversations,
     activeConversation,
     isSidebarOpen,
@@ -313,7 +466,9 @@ export function useWorkspace({ user, onUnauthorized }: UseWorkspaceOptions) {
     workspaceNotice,
     isLoadingConversations,
     isSendingMessage,
-    setDraft,
+    isUploadingAttachments,
+    voiceComposerState,
+    voiceError,
     toggleSidebar,
     toggleSettingsMenu,
     closeSettingsMenu,
@@ -325,6 +480,13 @@ export function useWorkspace({ user, onUnauthorized }: UseWorkspaceOptions) {
     clearSearch,
     openConversation,
     startNewConversation,
+    setDraft: updateDraft,
+    updateDraft,
+    addPendingFiles,
+    removePendingFile,
+    handleVoiceRecordingChange,
+    handleVoiceCaptureError,
+    transcribeRecordedAudio,
     sendMessage,
     usePromptSuggestion,
     selectSearchResult,

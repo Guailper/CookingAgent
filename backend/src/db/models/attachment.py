@@ -1,4 +1,4 @@
-"""附件表 ORM 模型。"""
+"""Attachment ORM model used for chat message uploads."""
 
 from datetime import datetime
 from typing import Optional
@@ -7,14 +7,14 @@ from sqlalchemy import ForeignKey, Index, String, text
 from sqlalchemy.dialects.mysql import BIGINT, DATETIME
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from src.core.constants import ATTACHMENT_KIND_DOCUMENT, PARSE_STATUS_PENDING
 from src.db.base import Base
 
 
 class Attachment(Base):
-    """附件实体，负责保存上传文件的存储信息和解析状态。"""
+    """Persist uploaded files before and after they are bound to a chat message."""
 
     __tablename__ = "attachments"
-    # 这里补充了常用查询索引，方便按会话、消息和解析状态定位附件。
     __table_args__ = (
         Index("idx_attachments_conversation_id", "conversation_id"),
         Index("idx_attachments_message_id", "message_id"),
@@ -28,7 +28,6 @@ class Attachment(Base):
         },
     )
 
-    # 主键和外键字段。
     id: Mapped[int] = mapped_column(
         BIGINT(unsigned=True),
         primary_key=True,
@@ -47,14 +46,14 @@ class Attachment(Base):
         nullable=False,
         comment="conversation id",
     )
-    message_id: Mapped[int] = mapped_column(
+    # The message binding happens after upload succeeds, so this field must allow NULL.
+    message_id: Mapped[int | None] = mapped_column(
         BIGINT(unsigned=True),
         ForeignKey("messages.id", ondelete="CASCADE", onupdate="RESTRICT"),
-        nullable=False,
-        comment="source message id",
+        nullable=True,
+        comment="bound message id",
     )
 
-    # 文件基础信息和存储定位字段。
     original_name: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
@@ -80,6 +79,13 @@ class Attachment(Base):
         nullable=False,
         comment="file size in bytes",
     )
+    attachment_kind: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=ATTACHMENT_KIND_DOCUMENT,
+        server_default=text(f"'{ATTACHMENT_KIND_DOCUMENT}'"),
+        comment="attachment kind",
+    )
     storage_provider: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
@@ -97,17 +103,14 @@ class Attachment(Base):
         nullable=True,
         comment="file hash",
     )
-
-    # 解析状态字段，用于跟踪文件是否已经被文本抽取或 OCR 处理。
     parse_status: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
-        default="pending",
-        server_default=text("'pending'"),
+        default=PARSE_STATUS_PENDING,
+        server_default=text(f"'{PARSE_STATUS_PENDING}'"),
         comment="parse status",
     )
 
-    # 审计字段：记录附件创建与更新时间。
     created_at: Mapped[datetime] = mapped_column(
         DATETIME(fsp=3),
         nullable=False,
@@ -122,12 +125,11 @@ class Attachment(Base):
         comment="updated time",
     )
 
-    # ORM 关系：一个附件来自一条消息，同时归属于一个会话。
     conversation: Mapped["Conversation"] = relationship(
         "Conversation",
         back_populates="attachments",
     )
-    message: Mapped["Message"] = relationship(
+    message: Mapped[Optional["Message"]] = relationship(
         "Message",
         back_populates="attachments",
     )

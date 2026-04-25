@@ -129,12 +129,13 @@ CREATE TABLE IF NOT EXISTS `attachments` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '内部主键',
   `public_id` VARCHAR(64) NOT NULL COMMENT '对外业务ID，例如 file_xxx',
   `conversation_id` BIGINT UNSIGNED NOT NULL COMMENT '所属会话ID',
-  `message_id` BIGINT UNSIGNED NOT NULL COMMENT '来源消息ID',
+  `message_id` BIGINT UNSIGNED NULL DEFAULT NULL COMMENT '绑定消息ID，上传成功后可为空，发送消息成功后再绑定',
   `original_name` VARCHAR(255) NOT NULL COMMENT '原始文件名',
   `stored_name` VARCHAR(255) NOT NULL COMMENT '存储文件名',
   `file_ext` VARCHAR(20) NOT NULL COMMENT '文件扩展名',
   `mime_type` VARCHAR(100) NOT NULL COMMENT 'MIME类型',
   `file_size` BIGINT UNSIGNED NOT NULL COMMENT '文件大小，单位字节',
+  `attachment_kind` VARCHAR(32) NOT NULL DEFAULT 'document' COMMENT '附件类型：document/image',
   `storage_provider` VARCHAR(32) NOT NULL DEFAULT 'local' COMMENT '存储提供方',
   `storage_path` VARCHAR(1024) NOT NULL COMMENT '存储路径',
   `file_hash` VARCHAR(128) NULL DEFAULT NULL COMMENT '文件哈希',
@@ -345,12 +346,13 @@ CREATE TABLE IF NOT EXISTS `attachments` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `public_id` VARCHAR(64) NOT NULL,
   `conversation_id` BIGINT UNSIGNED NOT NULL,
-  `message_id` BIGINT UNSIGNED NOT NULL,
+  `message_id` BIGINT UNSIGNED NULL DEFAULT NULL,
   `original_name` VARCHAR(255) NOT NULL,
   `stored_name` VARCHAR(255) NOT NULL,
   `file_ext` VARCHAR(20) NOT NULL,
   `mime_type` VARCHAR(100) NOT NULL,
   `file_size` BIGINT UNSIGNED NOT NULL,
+  `attachment_kind` VARCHAR(32) NOT NULL DEFAULT 'document',
   `storage_provider` VARCHAR(32) NOT NULL DEFAULT 'local',
   `storage_path` VARCHAR(1024) NOT NULL,
   `file_hash` VARCHAR(128) NULL DEFAULT NULL,
@@ -436,7 +438,61 @@ CREATE TABLE IF NOT EXISTS `agent_runs` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 ```
 
-## 6. 后续建议
+## 6. 旧版附件表升级 SQL
+
+如果你已经按上一个版本创建过 `attachments` 表，需要执行下面这组增量 SQL，把表结构升级到“先上传附件、后绑定消息”的新方案。
+
+```sql
+USE `cooking_agent`;
+
+SET @has_attachment_kind := (
+  SELECT COUNT(*)
+  FROM `INFORMATION_SCHEMA`.`COLUMNS`
+  WHERE `TABLE_SCHEMA` = DATABASE()
+    AND `TABLE_NAME` = 'attachments'
+    AND `COLUMN_NAME` = 'attachment_kind'
+);
+
+SET @sql := IF(
+  @has_attachment_kind = 0,
+  "ALTER TABLE `attachments` ADD COLUMN `attachment_kind` VARCHAR(32) NOT NULL DEFAULT 'document' COMMENT '附件类型：document/image' AFTER `file_size`",
+  "SELECT 'skip add attachment_kind' AS message"
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @message_id_nullable := (
+  SELECT `IS_NULLABLE`
+  FROM `INFORMATION_SCHEMA`.`COLUMNS`
+  WHERE `TABLE_SCHEMA` = DATABASE()
+    AND `TABLE_NAME` = 'attachments'
+    AND `COLUMN_NAME` = 'message_id'
+  LIMIT 1
+);
+
+SET @sql := IF(
+  @message_id_nullable = 'NO',
+  "ALTER TABLE `attachments` MODIFY COLUMN `message_id` BIGINT UNSIGNED NULL DEFAULT NULL COMMENT '绑定消息ID，上传成功后可为空，发送消息成功后再绑定'",
+  "SELECT 'skip modify message_id' AS message"
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+UPDATE `attachments`
+SET `attachment_kind` = CASE
+  WHEN LOWER(`file_ext`) IN ('.jpg', '.jpeg', '.png', '.webp') THEN 'image'
+  ELSE 'document'
+END;
+```
+
+这次数据库层的核心变更只有 `attachments` 表：
+
+- `messages` 表里的 `extra_metadata` 已经存在于当前建表 SQL 中，不需要额外升级。
+- `attachment_ids` 是消息请求参数，不是数据库字段，因此不需要新增列。
+
+## 7. 后续建议
 
 这份 SQL 已经足够支撑当前需求文档里的 MVP。
 

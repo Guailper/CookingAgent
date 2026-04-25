@@ -1,10 +1,36 @@
 /*
- * 这个文件定义“主界面 / 聊天界面”会用到的核心前端类型。
- * 这些类型已经不是后端原始返回，而是服务层整理后的前端友好结构。
- * 这样组件和 hooks 可以更专注于交互，而不用关心后端字段命名。
+ * Frontend-facing chat types.
+ * These are the normalized shapes consumed by hooks and components, not raw API payloads.
  */
 
 export type ChatMessageRole = "user" | "assistant" | "system";
+
+export type ChatAttachmentKind = "document" | "image";
+
+export type ChatAttachment = {
+  id: string;
+  name: string;
+  extension: string;
+  mimeType: string;
+  size: number;
+  kind: ChatAttachmentKind;
+  parseStatus: string;
+};
+
+export type PendingAttachmentStatus = "pending" | "uploaded";
+
+export type PendingAttachment = {
+  localId: string;
+  file: File;
+  name: string;
+  mimeType: string;
+  size: number;
+  kind: ChatAttachmentKind;
+  status: PendingAttachmentStatus;
+  uploadedId: string | null;
+};
+
+export type VoiceComposerState = "idle" | "recording" | "transcribing" | "error";
 
 export type ChatMessage = {
   id: string;
@@ -13,6 +39,8 @@ export type ChatMessage = {
   createdAt: string;
   status: string;
   messageType: string;
+  attachments: ChatAttachment[];
+  extraMetadata?: Record<string, unknown> | null;
 };
 
 export type ChatConversation = {
