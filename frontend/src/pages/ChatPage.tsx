@@ -21,9 +21,10 @@ import "../styles/chat.css";
 type ChatPageProps = {
   user: AuthenticatedUser;
   onLogout: () => void;
+  onUserChange: (user: AuthenticatedUser) => void;
 };
 
-export default function ChatPage({ user, onLogout }: ChatPageProps) {
+export default function ChatPage({ user, onLogout, onUserChange }: ChatPageProps) {
   const {
     draft,
     pendingAttachments,
@@ -154,6 +155,7 @@ export default function ChatPage({ user, onLogout }: ChatPageProps) {
           activeView={activeSettingsView}
           onClose={closeSettingsPanel}
           onLogout={onLogout}
+          onUserChange={onUserChange}
         />
       </section>
     </div>

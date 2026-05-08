@@ -3,6 +3,10 @@
  * The component renders message bubbles plus any attachments already bound to those messages.
  */
 
+import { useLayoutEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+
 import { formatAttachmentSize } from "../../services";
 import type { ChatConversation, ChatMessage } from "../../types";
 
@@ -12,7 +16,7 @@ type MessageListProps = {
 
 function getMessageRoleLabel(message: ChatMessage) {
   if (message.role === "user") {
-    return "你";
+    return "用户";
   }
 
   if (message.role === "system") {
@@ -22,10 +26,48 @@ function getMessageRoleLabel(message: ChatMessage) {
   return "轻灵厨房";
 }
 
+function MessageContent({ message }: { message: ChatMessage }) {
+  if (message.role === "user") {
+    return <p className="message-bubble__plain-text">{message.content}</p>;
+  }
+
+  return (
+    <div className="message-bubble__markdown">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+    </div>
+  );
+}
+
 export function MessageList({ conversation }: MessageListProps) {
+  const messageListRef = useRef<HTMLDivElement | null>(null);
+  const [isBackToTopVisible, setIsBackToTopVisible] = useState(false);
+  const lastMessage = conversation.messages[conversation.messages.length - 1];
+
+  function updateBackToTopVisibility() {
+    const messageListElement = messageListRef.current;
+    setIsBackToTopVisible(Boolean(messageListElement && messageListElement.scrollTop > 48));
+  }
+
+  function scrollToTop() {
+    messageListRef.current?.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
+  }
+
+  useLayoutEffect(() => {
+    const messageListElement = messageListRef.current;
+    if (!messageListElement) {
+      return;
+    }
+
+    messageListElement.scrollTop = messageListElement.scrollHeight;
+    updateBackToTopVisibility();
+  }, [conversation.id, lastMessage?.id]);
+
   return (
     <section className="message-panel">
-      <div className="message-list">
+      <div className="message-list" ref={messageListRef} onScroll={updateBackToTopVisibility}>
         {conversation.messages.length > 0 ? (
           conversation.messages.map((message) => (
             <article
@@ -39,7 +81,7 @@ export function MessageList({ conversation }: MessageListProps) {
                 <time>{message.createdAt}</time>
               </header>
 
-              {message.content && <p>{message.content}</p>}
+              {message.content && <MessageContent message={message} />}
 
               {message.attachments.length > 0 && (
                 <div className="message-bubble__attachments">
@@ -62,6 +104,18 @@ export function MessageList({ conversation }: MessageListProps) {
           </div>
         )}
       </div>
+
+      {isBackToTopVisible && (
+        <button
+          className="message-back-to-top"
+          type="button"
+          aria-label="回到顶部"
+          title="回到顶部"
+          onClick={scrollToTop}
+        >
+          ↑
+        </button>
+      )}
     </section>
   );
 }

@@ -38,6 +38,7 @@ export type AuthenticatedUser = {
   fullName: string;
   email: string;
   createdAt: string;
+  avatarUrl?: string | null;
 };
 
 export type AuthSession = {
@@ -67,4 +68,14 @@ export type RegisterInput = {
   password: string;
   confirmPassword: string;
   emailCode: string;
+};
+
+export type UpdateProfileInput = {
+  fullName: string;
+};
+
+export type ChangePasswordInput = {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword: string;
 };

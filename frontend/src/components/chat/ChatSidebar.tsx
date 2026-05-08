@@ -33,8 +33,22 @@ type ChatSidebarProps = {
   onOpenSettingsView: (view: SettingsView) => void;
 };
 
+const SYSTEM_AVATAR_SRC = "/assets/cooking-agent-system-avatar.png";
+
 function getAvatarLabel(user: AuthenticatedUser) {
   return user.fullName.slice(0, 1).toUpperCase();
+}
+
+function renderSystemAvatar() {
+  return <img src={SYSTEM_AVATAR_SRC} alt="CookingAgent system avatar" />;
+}
+
+function renderAvatar(user: AuthenticatedUser) {
+  if (user.avatarUrl) {
+    return <img src={user.avatarUrl} alt={`${user.fullName} 的头像`} />;
+  }
+
+  return getAvatarLabel(user);
 }
 
 export function ChatSidebar({
@@ -53,7 +67,7 @@ export function ChatSidebar({
     <aside className={`workspace-sidebar ${isOpen ? "" : "workspace-sidebar--collapsed"}`}>
       {/* 顶部品牌信息帮助用户快速识别当前所处的产品空间。 */}
       <div className="workspace-sidebar__brand">
-        <div className="workspace-sidebar__brand-mark">{getAvatarLabel(user)}</div>
+        <div className="workspace-sidebar__brand-mark">{renderSystemAvatar()}</div>
         {isOpen && (
           <div className="workspace-sidebar__brand-copy">
             <span>您的智能厨师</span>
@@ -101,7 +115,7 @@ export function ChatSidebar({
       {/* 底部用户区域始终锚定在侧栏底边，不参与最近会话列表的滚动。 */}
       <div className="workspace-sidebar__footer">
         <div className="workspace-user">
-          <div className="workspace-user__avatar">{getAvatarLabel(user)}</div>
+          <div className="workspace-user__avatar">{renderAvatar(user)}</div>
 
           {isOpen && (
             <div className="workspace-user__copy">

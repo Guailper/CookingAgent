@@ -9,22 +9,26 @@ import type {
   ApiAuthResponse,
   ApiCurrentUserResponse,
   ApiErrorResponse,
+  ApiUpdateUserProfileResponse,
   ApiUserProfile,
 } from "../../types";
 import type {
   AuthenticatedUser,
   AuthSession,
+  ChangePasswordInput,
   EmailCodeLoginInput,
   EmailCodePurpose,
   LoginInput,
   RegisterInput,
   RememberedCredentials,
+  UpdateProfileInput,
 } from "../../types";
 
 type StoredSession = AuthSession;
 
 const REMEMBERED_KEY = "cooking-agent.remembered";
 const SESSION_KEY = "cooking-agent.session";
+const AVATAR_KEY_PREFIX = "cooking-agent.avatar.";
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "/api/v1").replace(/\/$/, "");
 
 export class AuthServiceError extends Error {
@@ -75,12 +79,25 @@ function clearStorageKey(key: string) {
   window.localStorage.removeItem(key);
 }
 
+function getAvatarStorageKey(publicId: string) {
+  return `${AVATAR_KEY_PREFIX}${publicId}`;
+}
+
+function getStoredAvatarUrl(publicId: string) {
+  if (!canUseStorage()) {
+    return null;
+  }
+
+  return window.localStorage.getItem(getAvatarStorageKey(publicId));
+}
+
 function toPublicUser(profile: ApiUserProfile): AuthenticatedUser {
   return {
     publicId: profile.public_id,
     fullName: profile.username,
     email: profile.email,
     createdAt: profile.created_at,
+    avatarUrl: getStoredAvatarUrl(profile.public_id),
   };
 }
 
@@ -142,6 +159,12 @@ function toAuthServiceError(payload: ApiErrorResponse | null, status: number): A
         "账号不可用",
         "当前账号状态不可用，请联系管理员处理。",
       );
+    case "INVALID_USERNAME":
+      return new AuthServiceError(code, "昵称不可用", backendMessage);
+    case "INVALID_CURRENT_PASSWORD":
+      return new AuthServiceError(code, "当前密码不正确", backendMessage);
+    case "WEAK_PASSWORD":
+      return new AuthServiceError(code, "新密码太短", backendMessage);
     default:
       return new AuthServiceError(
         code,
@@ -204,6 +227,43 @@ export function getStoredSession() {
 
 export function clearSession() {
   clearStorageKey(SESSION_KEY);
+}
+
+export function updateStoredUser(user: AuthenticatedUser) {
+  const session = getStoredSession();
+
+  if (!session) {
+    return;
+  }
+
+  persistSession({
+    ...session,
+    user,
+  });
+}
+
+export function updateStoredAvatar(publicId: string, avatarUrl: string | null) {
+  if (!canUseStorage()) {
+    return;
+  }
+
+  const storageKey = getAvatarStorageKey(publicId);
+  if (avatarUrl) {
+    window.localStorage.setItem(storageKey, avatarUrl);
+  } else {
+    window.localStorage.removeItem(storageKey);
+  }
+
+  const session = getStoredSession();
+  if (session?.user.publicId === publicId) {
+    persistSession({
+      ...session,
+      user: {
+        ...session.user,
+        avatarUrl,
+      },
+    });
+  }
 }
 
 export async function login(input: LoginInput): Promise<AuthSession> {
@@ -363,6 +423,80 @@ export async function getCurrentUser(): Promise<AuthenticatedUser> {
 
   persistSession(nextSession);
   return nextSession.user;
+}
+
+export async function updateCurrentUserProfile(input: UpdateProfileInput): Promise<AuthenticatedUser> {
+  const session = getStoredSession();
+  const fullName = input.fullName.trim();
+
+  if (!session?.accessToken) {
+    throw new AuthServiceError(
+      "missing_session",
+      "尚未登录",
+      "当前没有可用的登录状态。",
+    );
+  }
+
+  if (!fullName) {
+    throw new AuthServiceError("missing_full_name", "请填写昵称", "昵称不能为空。");
+  }
+
+  const response = await requestJson<ApiUpdateUserProfileResponse>("/auth/me", {
+    method: "PATCH",
+    headers: getAuthHeaders(session.accessToken),
+    body: JSON.stringify({ username: fullName }),
+  });
+
+  const nextUser = toPublicUser(response.data);
+  persistSession({
+    ...session,
+    user: nextUser,
+  });
+  return nextUser;
+}
+
+export async function changeCurrentUserPassword(input: ChangePasswordInput) {
+  const session = getStoredSession();
+  const currentPassword = input.currentPassword.trim();
+  const newPassword = input.newPassword.trim();
+  const confirmPassword = input.confirmPassword.trim();
+
+  if (!session?.accessToken) {
+    throw new AuthServiceError(
+      "missing_session",
+      "尚未登录",
+      "当前没有可用的登录状态。",
+    );
+  }
+
+  if (!currentPassword || !newPassword || !confirmPassword) {
+    throw new AuthServiceError(
+      "missing_password_fields",
+      "请完整填写密码",
+      "修改密码需要填写当前密码和新密码。",
+    );
+  }
+
+  if (newPassword.length < 8) {
+    throw new AuthServiceError("weak_password", "新密码太短", "新密码至少需要 8 位字符。");
+  }
+
+  if (newPassword !== confirmPassword) {
+    throw new AuthServiceError(
+      "password_mismatch",
+      "两次密码不一致",
+      "请确认两次输入的新密码完全一致。",
+    );
+  }
+
+  await requestJson<{ message: string }>("/auth/password", {
+    method: "PATCH",
+    headers: getAuthHeaders(session.accessToken),
+    body: JSON.stringify({
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+  });
 }
 
 export async function requestPasswordReset(email: string) {

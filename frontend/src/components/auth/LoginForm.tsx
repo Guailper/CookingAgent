@@ -35,23 +35,6 @@ export function LoginForm({
 
   return (
     <form className="auth-form" onSubmit={onSubmit}>
-      <div className="segmented-control" role="tablist" aria-label="登录方式">
-        <button
-          className={loginMethod === "password" ? "segmented-control__item is-active" : "segmented-control__item"}
-          type="button"
-          onClick={() => onLoginMethodChange("password")}
-        >
-          密码登录
-        </button>
-        <button
-          className={isEmailCodeLogin ? "segmented-control__item is-active" : "segmented-control__item"}
-          type="button"
-          onClick={() => onLoginMethodChange("emailCode")}
-        >
-          验证码登录
-        </button>
-      </div>
-
       <label className="field-group">
         <span className="field-label">邮箱地址</span>
         <div className="pill-input">
@@ -65,46 +48,67 @@ export function LoginForm({
       </label>
 
       {isEmailCodeLogin ? (
-        <label className="field-group">
-          <span className="field-label">邮箱验证码</span>
-          <div className="code-input-row">
-            <div className="pill-input">
-              <input
-                type="text"
-                inputMode="numeric"
-                placeholder="请输入验证码"
-                value={form.emailCode}
-                onChange={(event) => onFieldChange("emailCode", event.target.value)}
-              />
+        <div className="field-group">
+          <label className="field-group">
+            <span className="field-label">邮箱验证码</span>
+            <div className="code-input-row">
+              <div className="pill-input">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="请输入验证码"
+                  value={form.emailCode}
+                  onChange={(event) => onFieldChange("emailCode", event.target.value)}
+                />
+              </div>
+              <button
+                className="code-button"
+                type="button"
+                disabled={isSendingCode || codeCooldown > 0}
+                onClick={onSendEmailCode}
+              >
+                {sendCodeText}
+              </button>
             </div>
-            <button
-              className="code-button"
-              type="button"
-              disabled={isSendingCode || codeCooldown > 0}
-              onClick={onSendEmailCode}
-            >
-              {sendCodeText}
-            </button>
-          </div>
-        </label>
+          </label>
+
+          <button
+            className="login-method-link"
+            type="button"
+            onClick={() => onLoginMethodChange("password")}
+          >
+            使用密码登录
+          </button>
+        </div>
       ) : (
         <>
-          <label className="field-group">
+          <div className="field-group">
             <span className="field-row">
               <span className="field-label">密码</span>
               <button className="text-link" type="button" onClick={onForgotPassword}>
                 忘记密码？
               </button>
             </span>
-            <div className="pill-input">
-              <input
-                type="password"
-                placeholder="请输入密码"
-                value={form.password}
-                onChange={(event) => onFieldChange("password", event.target.value)}
-              />
-            </div>
-          </label>
+
+            <label>
+              <div className="pill-input">
+                <input
+                  type="password"
+                  placeholder="请输入密码"
+                  value={form.password}
+                  onChange={(event) => onFieldChange("password", event.target.value)}
+                />
+              </div>
+            </label>
+
+            <button
+              className="login-method-link"
+              type="button"
+              onClick={() => onLoginMethodChange("emailCode")}
+            >
+              使用验证码登录
+            </button>
+          </div>
 
           <label className="remember-row">
             <input

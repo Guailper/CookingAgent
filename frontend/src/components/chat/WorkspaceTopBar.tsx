@@ -4,9 +4,12 @@
  * 搜索框会根据用户输入展示半透明结果列表，帮助快速跳转历史会话或推荐话题。
  */
 
+import { useState } from "react";
 import type { KeyboardEvent, MouseEvent } from "react";
 import type { WorkspaceSearchResult } from "../../types";
 import { BellIcon, HelpIcon, SearchIcon } from "./WorkspaceIcons";
+
+type TopBarPanel = "notifications" | "help" | null;
 
 type WorkspaceTopBarProps = {
   searchKeyword: string;
@@ -35,6 +38,8 @@ export function WorkspaceTopBar({
   onCloseSearchMenu,
   onSelectSearchResult,
 }: WorkspaceTopBarProps) {
+  const [activePanel, setActivePanel] = useState<TopBarPanel>(null);
+
   function stopHeaderClick(event: MouseEvent<HTMLElement>) {
     // 阻止顶部区域点击冒泡到主容器，避免点搜索结果时先把列表关掉。
     event.stopPropagation();
@@ -44,6 +49,10 @@ export function WorkspaceTopBar({
     if (event.key === "Escape") {
       onCloseSearchMenu();
     }
+  }
+
+  function togglePanel(panel: Exclude<TopBarPanel, null>) {
+    setActivePanel((currentPanel) => (currentPanel === panel ? null : panel));
   }
 
   return (
@@ -100,12 +109,43 @@ export function WorkspaceTopBar({
 
       {/* 右侧区域保留通知和帮助入口，维持顶部工具栏的信息层级。 */}
       <div className="workspace-topbar__actions">
-        <button className="icon-button" type="button" aria-label="查看提醒">
+        <button
+          className="icon-button"
+          type="button"
+          aria-label="查看提醒"
+          onClick={() => togglePanel("notifications")}
+        >
           <BellIcon />
         </button>
-        <button className="icon-button" type="button" aria-label="打开帮助">
+        <button
+          className="icon-button"
+          type="button"
+          aria-label="打开帮助"
+          onClick={() => togglePanel("help")}
+        >
           <HelpIcon />
         </button>
+
+        {activePanel && (
+          <div
+            className="topbar-popover"
+            role="dialog"
+            aria-label={activePanel === "help" ? "帮助" : "提醒"}
+          >
+            {activePanel === "notifications" ? (
+              <>
+                <strong>提醒</strong>
+                <p>暂无新的系统通知。你可以继续提问、上传菜谱文件，或开启新的菜单对话。</p>
+              </>
+            ) : (
+              <>
+                <strong>帮助</strong>
+                <p>可在输入框描述食材、口味、人数和时间，也可以上传图片或文档让助手一起参考。</p>
+                <p>左侧可切换历史对话，底部设置按钮可修改资料、密码和头像。</p>
+              </>
+            )}
+          </div>
+        )}
       </div>
     </header>
   );

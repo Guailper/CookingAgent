@@ -3,10 +3,11 @@
 from datetime import datetime
 from typing import Any
 
-from agent.contracts import AgentContextMessage, AgentTurnContext, AgentTurnResult
+from agent.contracts import ActionIntent, AgentContextMessage, AgentTurnContext, AgentTurnResult
 from agent.fallback import ERROR_FALLBACK_REPLY, build_fallback_result
 from agent.orchestration import AgentOrchestrator
 from agent.runner import LangChainAgentRunner
+from agent.workflows.memory_update_workflow import MemoryUpdateWorkflow
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -153,6 +154,7 @@ class AgentService:
             agent_run=agent_run,
             result=result,
         )
+        self._try_update_memory_after_answer(context=context, result=result)
         refreshed_agent_run = self.agent_run_repository.get_by_id(agent_run.id)
         if refreshed_agent_run is None:
             raise AppException(500, "AGENT_RESULT_LOAD_FAILED", "智能体回复成功，但结果回读失败。")
@@ -167,6 +169,35 @@ class AgentService:
             },
         )
         return user_message, assistant_message, refreshed_agent_run
+
+    def _try_update_memory_after_answer(
+        self,
+        *,
+        context: AgentTurnContext,
+        result: AgentTurnResult,
+    ) -> None:
+        """回答成功后顺手抽取长期偏好，但不能影响用户收到回答。
+
+        这个副作用只在 answer 工作流后触发：显式 memory_update 工作流已经自己落库，
+        其他解析/入库工作流也不应该被记忆抽取打断。
+        """
+
+        if result.intent_type != "answer":
+            return
+
+        try:
+            MemoryUpdateWorkflow(self.db).run(
+                context,
+                ActionIntent(
+                    intent_type="memory_update",
+                    confidence=0.5,
+                    source="answer_side_effect",
+                    reason="回答成功后尝试抽取用户明确表达的长期偏好。",
+                ),
+            )
+        except Exception as exc:
+            self.db.rollback()
+            logger.warning("Memory side-effect update failed.", exc_info=exc)
 
     def _resolve_knowledge_base_ids(
         self,

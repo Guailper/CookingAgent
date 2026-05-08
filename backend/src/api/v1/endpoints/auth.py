@@ -7,12 +7,14 @@ from src.api.deps import get_current_user, get_db_session
 from src.schemas.auth import (
     AuthPayload,
     AuthResponse,
+    ChangePasswordRequest,
     CurrentUserResponse,
     EmailCodeLoginRequest,
     LoginRequest,
     MessageResponse,
     RegisterRequest,
     SendEmailCodeRequest,
+    UpdateUserProfileRequest,
     UserProfile,
 )
 from src.services.auth_service import AuthService
@@ -113,3 +115,37 @@ async def get_me(current_user=Depends(get_current_user)) -> CurrentUserResponse:
         message="获取当前用户成功。",
         data=UserProfile.model_validate(current_user),
     )
+
+
+@router.patch("/me", response_model=CurrentUserResponse, summary="更新当前用户资料")
+async def update_me(
+    payload: UpdateUserProfileRequest,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> CurrentUserResponse:
+    """更新当前登录用户的昵称等基础资料。"""
+
+    user = AuthService(db).update_user_profile(
+        user=current_user,
+        username=payload.username,
+    )
+    return CurrentUserResponse(
+        message="用户资料已更新。",
+        data=UserProfile.model_validate(user),
+    )
+
+
+@router.patch("/password", response_model=MessageResponse, summary="修改当前用户密码")
+async def change_password(
+    payload: ChangePasswordRequest,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> MessageResponse:
+    """校验当前密码后修改当前登录用户密码。"""
+
+    AuthService(db).change_password(
+        user=current_user,
+        current_password=payload.current_password,
+        new_password=payload.new_password,
+    )
+    return MessageResponse(message="密码已更新，请使用新密码登录。")

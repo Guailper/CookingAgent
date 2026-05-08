@@ -58,8 +58,18 @@ class RagContext:
     query: str
     knowledge_base_public_ids: list[str] = field(default_factory=list)
     chunks: list["RetrievedChunk"] = field(default_factory=list)
+    decision: "RetrievalDecision | None" = None
     error_code: str | None = None
     error_message: str | None = None
+
+
+@dataclass(frozen=True)
+class RetrievalDecision:
+    """Decision made before running vector retrieval."""
+
+    should_retrieve: bool
+    reason: str
+    source: str
 
 
 @dataclass(frozen=True)

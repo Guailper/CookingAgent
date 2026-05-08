@@ -10,6 +10,7 @@ from agent.contracts import (
     AgentContextMessage,
     AgentTurnContext,
     RagContext,
+    RetrievalDecision,
     RetrievedChunk,
 )
 from agent.factories.model_factory import _resolve_temperature, _should_disable_reasoning
@@ -93,6 +94,30 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
         self.assertIn("蛋炒饭适合使用隔夜米饭", prompt)
         self.assertNotIn("必须先调用 rag_search", prompt)
 
+    def test_system_prompt_explains_skipped_rag_context(self) -> None:
+        context = self._context(text="谢谢")
+        context = AgentTurnContext(
+            **{
+                **context.__dict__,
+                "rag_context": RagContext(
+                    enabled=True,
+                    status="skipped",
+                    query=context.user_message_text,
+                    knowledge_base_public_ids=["cookbook"],
+                    decision=RetrievalDecision(
+                        should_retrieve=False,
+                        source="rule",
+                        reason="skip control turn",
+                    ),
+                ),
+            }
+        )
+
+        prompt = build_system_prompt(context)
+
+        self.assertIn("规则判断不需要检索", prompt)
+        self.assertIn("不要声称已经检索过知识库", prompt)
+
     def test_rag_search_tool_returns_retrieved_chunks(self) -> None:
         with patch("agent.tools.rag_search.RagRetriever") as retriever_cls:
             retriever_cls.return_value.retrieve.return_value = [
@@ -134,14 +159,43 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
         self.assertTrue(rag_context.enabled)
         self.assertEqual(rag_context.status, "miss")
         self.assertIn("cookbook", rag_context.knowledge_base_public_ids)
+        self.assertTrue(rag_context.decision.should_retrieve)
 
-    def test_rag_context_snapshot_keeps_chunk_citations(self) -> None:
+    def test_rag_context_builder_skips_short_control_turns(self) -> None:
+        with patch("agent.rag.context_builder.RagRetriever") as retriever_cls:
+            rag_context = RagContextBuilder(self._settings()).build(
+                self._context(text="谢谢", knowledge_base_public_ids=[])
+            )
+
+        self.assertTrue(rag_context.enabled)
+        self.assertEqual(rag_context.status, "skipped")
+        self.assertFalse(rag_context.decision.should_retrieve)
+        retriever_cls.return_value.retrieve.assert_not_called()
+
+    def test_rag_context_builder_retrieves_for_domain_questions(self) -> None:
+        with patch("agent.rag.context_builder.RagRetriever") as retriever_cls:
+            retriever_cls.return_value.retrieve.return_value = []
+
+            rag_context = RagContextBuilder(self._settings()).build(
+                self._context(text="鸡蛋和米饭怎么做", knowledge_base_public_ids=[])
+            )
+
+        self.assertEqual(rag_context.status, "miss")
+        self.assertTrue(rag_context.decision.should_retrieve)
+        retriever_cls.return_value.retrieve.assert_called_once()
+
+    def test_rag_context_snapshot_keeps_chunk_citations_and_decision(self) -> None:
         snapshot = rag_context_to_snapshot(
             RagContext(
                 enabled=True,
                 status="hit",
                 query="蛋炒饭",
                 knowledge_base_public_ids=["cookbook"],
+                decision=RetrievalDecision(
+                    should_retrieve=True,
+                    source="rule",
+                    reason="domain question",
+                ),
                 chunks=[
                     RetrievedChunk(
                         content="content",
@@ -160,6 +214,7 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
         self.assertEqual(snapshot["status"], "hit")
         self.assertEqual(snapshot["chunk_count"], 1)
         self.assertEqual(snapshot["chunks"][0]["document_public_id"], "doc_1")
+        self.assertTrue(snapshot["decision"]["should_retrieve"])
 
     def test_answer_workflow_adds_intent_and_rag_metadata(self) -> None:
         fake_runner = SimpleNamespace(
@@ -177,9 +232,14 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
         fake_rag_builder = SimpleNamespace(
             build=lambda context: RagContext(
                 enabled=True,
-                status="miss",
+                status="skipped",
                 query=context.user_message_text,
                 knowledge_base_public_ids=["cookbook"],
+                decision=RetrievalDecision(
+                    should_retrieve=False,
+                    source="rule",
+                    reason="control turn",
+                ),
             )
         )
 
@@ -199,7 +259,8 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
 
         self.assertEqual(result.intent_type, "answer")
         self.assertEqual(result.workflow_name, "answer_workflow")
-        self.assertEqual(result.output_snapshot["rag"]["status"], "miss")
+        self.assertEqual(result.output_snapshot["rag"]["status"], "skipped")
+        self.assertFalse(result.output_snapshot["rag"]["decision"]["should_retrieve"])
 
     def test_output_normalizer_extracts_final_ai_message_and_metadata(self) -> None:
         messages = [

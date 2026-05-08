@@ -66,6 +66,10 @@ export default function AppRouter() {
     setRoute("workspace");
   }
 
+  function handleUserChange(user: AuthenticatedUser) {
+    setCurrentUser(user);
+  }
+
   function handleLogout() {
     clearSession();
     setCurrentUser(null);
@@ -84,7 +88,7 @@ export default function AppRouter() {
   }
 
   if (route === "workspace" && currentUser) {
-    return <ChatPage user={currentUser} onLogout={handleLogout} />;
+    return <ChatPage user={currentUser} onLogout={handleLogout} onUserChange={handleUserChange} />;
   }
 
   return <LoginPage onAuthenticated={handleAuthenticated} />;

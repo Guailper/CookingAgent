@@ -43,6 +43,12 @@ def _build_rag_instruction(rag_context: RagContext | None) -> str:
             "可以基于通用做菜知识回答，但不要声称答案来自知识库。"
         )
 
+    if rag_context.status == "skipped":
+        return (
+            "后端默认知识库能力已开启，但本轮输入经规则判断不需要检索。"
+            "请直接基于当前会话上下文回答，不要声称已经检索过知识库。"
+        )
+
     if rag_context.status == "error":
         return (
             "后端默认知识库检索本轮暂不可用。可以继续基于通用做菜知识回答，"
@@ -54,8 +60,6 @@ def _build_rag_instruction(rag_context: RagContext | None) -> str:
 
 def _build_attachment_instruction(context: AgentTurnContext) -> str:
     if context.attachment_public_ids:
-        return (
-            "本轮带有附件 ID。需要理解附件时，可以调用 read_attachment_context 工具查看可用摘要。"
-        )
+        return "本轮带有附件 ID。需要理解附件时，可以调用 read_attachment_context 工具查看可用摘要。"
 
     return "本轮没有附件上下文。"

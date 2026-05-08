@@ -1,6 +1,7 @@
 """Build structured RAG context before answer generation."""
 
 from agent.contracts import AgentTurnContext, RagContext, RetrievedChunk
+from agent.rag.retrieval_policy import RetrievalPolicy
 from src.core.config import Settings, get_settings
 from src.core.exceptions import AppException
 from src.core.logging import get_logger
@@ -16,13 +17,16 @@ class RagContextBuilder:
         self,
         settings: Settings | None = None,
         retriever: RagRetriever | None = None,
+        retrieval_policy: RetrievalPolicy | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self.retriever = retriever or RagRetriever(self.settings)
+        self.retrieval_policy = retrieval_policy or RetrievalPolicy()
 
     def build(self, context: AgentTurnContext) -> RagContext:
         knowledge_base_ids = self._resolve_knowledge_base_ids(context)
         query = (context.user_message_text or "").strip()
+        decision = self.retrieval_policy.decide(context)
 
         if not knowledge_base_ids:
             return RagContext(
@@ -30,6 +34,16 @@ class RagContextBuilder:
                 status="disabled",
                 query=query,
                 knowledge_base_public_ids=[],
+                decision=decision,
+            )
+
+        if not decision.should_retrieve:
+            return RagContext(
+                enabled=True,
+                status="skipped",
+                query=query,
+                knowledge_base_public_ids=knowledge_base_ids,
+                decision=decision,
             )
 
         try:
@@ -48,6 +62,7 @@ class RagContextBuilder:
                 status="error",
                 query=query,
                 knowledge_base_public_ids=knowledge_base_ids,
+                decision=decision,
                 error_code=exc.code,
                 error_message=exc.message,
             )
@@ -58,6 +73,7 @@ class RagContextBuilder:
                 status="error",
                 query=query,
                 knowledge_base_public_ids=knowledge_base_ids,
+                decision=decision,
                 error_code="RAG_RETRIEVAL_FAILED",
                 error_message=str(exc),
             )
@@ -68,6 +84,7 @@ class RagContextBuilder:
             query=query,
             knowledge_base_public_ids=knowledge_base_ids,
             chunks=chunks,
+            decision=decision,
         )
 
     def _resolve_knowledge_base_ids(self, context: AgentTurnContext) -> list[str]:
@@ -94,6 +111,7 @@ def rag_context_to_snapshot(rag_context: RagContext | None) -> dict:
         "knowledge_base_public_ids": rag_context.knowledge_base_public_ids,
         "chunk_count": len(rag_context.chunks),
         "chunks": [_chunk_to_snapshot(chunk) for chunk in rag_context.chunks],
+        "decision": _decision_to_snapshot(rag_context),
         "error_code": rag_context.error_code,
         "error_message": rag_context.error_message,
     }
@@ -107,4 +125,15 @@ def _chunk_to_snapshot(chunk: RetrievedChunk) -> dict:
         "page_no": chunk.page_no,
         "score": chunk.score,
         "chunk_public_id": chunk.metadata.get("chunk_public_id"),
+    }
+
+
+def _decision_to_snapshot(rag_context: RagContext) -> dict | None:
+    if rag_context.decision is None:
+        return None
+
+    return {
+        "should_retrieve": rag_context.decision.should_retrieve,
+        "reason": rag_context.decision.reason,
+        "source": rag_context.decision.source,
     }

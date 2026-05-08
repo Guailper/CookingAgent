@@ -31,6 +31,7 @@ export type ApiAuthResponse = ApiEnvelope<{
 }>;
 
 export type ApiCurrentUserResponse = ApiEnvelope<ApiUserProfile>;
+export type ApiUpdateUserProfileResponse = ApiEnvelope<ApiUserProfile>;
 
 export type ApiConversationItem = {
   public_id: string;

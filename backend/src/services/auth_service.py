@@ -138,6 +138,30 @@ class AuthService:
         self._touch_last_login(user)
         return user, self._issue_access_token(user)
 
+    def update_user_profile(self, user: User, username: str) -> User:
+        """更新当前用户的基础资料。"""
+
+        normalized_username = username.strip()
+        if not normalized_username:
+            raise AppException(400, "INVALID_USERNAME", "用户名不能为空。")
+
+        user.username = normalized_username
+        self.db.commit()
+        self.db.refresh(user)
+        return user
+
+    def change_password(self, user: User, current_password: str, new_password: str) -> None:
+        """校验旧密码后修改当前用户密码。"""
+
+        if not verify_password(current_password, user.password_hash):
+            raise AppException(400, "INVALID_CURRENT_PASSWORD", "当前密码不正确。")
+
+        if len(new_password.strip()) < 8:
+            raise AppException(400, "WEAK_PASSWORD", "新密码至少需要 8 位字符。")
+
+        user.password_hash = hash_password(new_password)
+        self.db.commit()
+
     def get_user_by_public_id(self, public_id: str) -> User | None:
         """根据业务 ID 查询用户。"""
 

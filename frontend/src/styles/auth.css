@@ -203,6 +203,21 @@
   color: var(--primary-strong);
 }
 
+.login-method-link {
+  justify-self: end;
+  margin-top: -2px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--primary);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.login-method-link:hover {
+  color: var(--primary-strong);
+}
+
 .pill-input {
   display: flex;
   align-items: center;

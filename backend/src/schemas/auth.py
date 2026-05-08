@@ -40,6 +40,19 @@ class EmailCodeLoginRequest(BaseModel):
     email_code: str = Field(..., min_length=4, max_length=12, description="邮箱验证码")
 
 
+class UpdateUserProfileRequest(BaseModel):
+    """更新当前用户资料请求体。"""
+
+    username: str = Field(..., min_length=2, max_length=100, description="用户名或昵称")
+
+
+class ChangePasswordRequest(BaseModel):
+    """修改当前用户密码请求体。"""
+
+    current_password: str = Field(..., min_length=6, max_length=128, description="当前密码")
+    new_password: str = Field(..., min_length=8, max_length=128, description="新密码")
+
+
 class UserProfile(BaseModel):
     """返回给前端的用户信息。"""
 

@@ -141,16 +141,11 @@ export function useAuth({ onAuthenticated }: UseAuthOptions = {}) {
   }
 
   function handleSocialAuth(provider: SocialProvider) {
-    const providerText = provider === "QQMail" ? "QQ 邮箱" : "谷歌邮箱";
-    const domainHint = provider === "QQMail" ? "建议使用 @qq.com 或 @foxmail.com 邮箱。" : "建议使用 @gmail.com 邮箱。";
+    void provider;
 
     setMode("login");
     setLoginMethod("emailCode");
-    setNotice({
-      tone: "info",
-      title: `${providerText}验证码登录`,
-      description: `${domainHint}输入邮箱后获取验证码即可登录。`,
-    });
+    setNotice(null);
   }
 
   async function handleSendLoginEmailCode() {
