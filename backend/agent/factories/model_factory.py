@@ -1,0 +1,94 @@
+"""LangChain chat model construction."""
+
+from typing import Any
+
+from src.core.config import Settings
+from src.core.exceptions import AppException
+
+
+def build_chat_model(settings: Settings) -> Any:
+    """Create the configured OpenAI-compatible LangChain chat model."""
+
+    provider = settings.agent_model_provider.strip().lower()
+    if provider == "disabled":
+        raise AppException(
+            503,
+            "AGENT_MODEL_NOT_CONFIGURED",
+            "智能体模型尚未配置，请补充 AGENT_MODEL_BASE_URL 和 AGENT_MODEL_API_KEY。",
+        )
+
+    if provider not in {"openai_compatible", "openai", "aihubmix", "kimi", "moonshot"}:
+        raise AppException(
+            503,
+            "AGENT_MODEL_PROVIDER_UNSUPPORTED",
+            f"当前智能体 provider `{provider}` 暂不支持。",
+        )
+
+    if not settings.agent_model_base_url or not settings.agent_model_api_key:
+        raise AppException(
+            503,
+            "AGENT_MODEL_NOT_CONFIGURED",
+            "智能体模型缺少 base URL 或 API key 配置。",
+        )
+
+    try:
+        from langchain_openai import ChatOpenAI
+    except ImportError as exc:
+        raise AppException(
+            500,
+            "AGENT_LANGCHAIN_NOT_INSTALLED",
+            "缺少 langchain-openai 依赖，请先安装 backend/requirements.txt。",
+        ) from exc
+
+    model_kwargs: dict[str, Any] = {}
+    if _should_disable_reasoning(settings, provider):
+        # 部分兼容 OpenAI 的推理模型会把预算消耗在 reasoning_content。
+        # 这里延续旧实现的保护逻辑，确保最终回复进入普通 content 字段。
+        model_kwargs["thinking"] = {"type": "disabled"}
+
+    return ChatOpenAI(
+        model=settings.agent_model_name,
+        api_key=settings.agent_model_api_key,
+        base_url=settings.agent_model_base_url.rstrip("/"),
+        temperature=_resolve_temperature(settings, provider),
+        max_tokens=(
+            settings.agent_max_output_tokens
+            if settings.agent_max_output_tokens > 0
+            else None
+        ),
+        timeout=settings.agent_request_timeout_seconds,
+        model_kwargs=model_kwargs,
+    )
+
+
+def _resolve_temperature(settings: Settings, provider: str) -> float:
+    """返回当前 provider 可接受的 temperature。
+
+    Moonshot/Kimi 的部分模型会拒绝非 1 的 temperature。项目 `.env` 里
+    仍允许保留通用的 `AGENT_TEMPERATURE=0.4`，这里在模型调用边界做兼容，
+    避免运行时因为供应商参数约束进入 fallback。
+    """
+
+    model_name = settings.agent_model_name.strip().lower()
+    if provider in {"kimi", "moonshot"} or model_name.startswith("kimi-"):
+        return 1.0
+
+    return settings.agent_temperature
+
+
+def _should_disable_reasoning(settings: Settings, provider: str) -> bool:
+    """判断是否要传递供应商专用的关闭推理参数。
+
+    `.env` 里可以保留 `AGENT_DISABLE_REASONING=true`，但 Kimi/Moonshot 的
+    OpenAI-compatible 接口不一定接受 GLM 风格的 `thinking` 字段，因此这里
+    只对已知需要该参数的 provider 或模型启用，避免请求被上游拒绝。
+    """
+
+    if not settings.agent_disable_reasoning:
+        return False
+
+    model_name = settings.agent_model_name.strip().lower()
+    if provider in {"aihubmix"} and model_name.startswith("glm-"):
+        return True
+
+    return model_name.startswith("glm-")
