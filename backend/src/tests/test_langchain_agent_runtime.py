@@ -20,8 +20,10 @@ from agent.prompts.system_prompts import build_system_prompt
 from agent.rag.context_builder import RagContextBuilder, rag_context_to_snapshot
 from agent.runner import LangChainAgentRunner
 from agent.tools.rag_search import build_rag_search_tool
+from agent.tools.weather import build_weather_tool
+from agent.tools.web_search import build_web_search_tool
 from agent.workflows.answer_workflow import AnswerWorkflow
-from src.core.config import get_settings
+from src.core.config import AgentModelCandidate, get_settings
 from src.core.exceptions import AppException
 
 
@@ -39,8 +41,16 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
             "agent_temperature": 0.4,
             "agent_max_output_tokens": 512,
             "agent_disable_reasoning": True,
+            "agent_model_candidates": [],
             "rag_default_knowledge_base_ids": ["cookbook"],
             "rag_final_top_k": 3,
+            "weather_api_key": "",
+            "weather_api_base_url": "https://devapi.qweather.com",
+            "weather_geo_base_url": "https://geoapi.qweather.com",
+            "weather_request_timeout_seconds": 10,
+            "serpapi_api_key": "",
+            "serpapi_search_url": "https://serpapi.com/search.json",
+            "web_search_request_timeout_seconds": 15,
         }
         defaults.update(overrides)
         return SimpleNamespace(**defaults)
@@ -147,6 +157,102 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
 
         call_kwargs = retriever_cls.return_value.retrieve.call_args.kwargs
         self.assertIn("cookbook", call_kwargs["knowledge_base_public_ids"])
+
+    def test_weather_tool_reports_missing_api_key(self) -> None:
+        tool = build_weather_tool(self._settings(weather_api_key=""))
+
+        result = tool("北京", "now")
+
+        self.assertIn("WEATHER_API_KEY", result)
+
+    def test_weather_tool_returns_current_weather(self) -> None:
+        class _FakeResponse:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return self.payload
+
+        class _FakeClient:
+            def __init__(self, timeout):
+                self.timeout = timeout
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return None
+
+            def get(self, url, params):
+                if "city/lookup" in url:
+                    return _FakeResponse(
+                        {"code": "200", "location": [{"id": "101010100", "name": "北京"}]}
+                    )
+                return _FakeResponse(
+                    {
+                        "code": "200",
+                        "now": {
+                            "text": "晴",
+                            "temp": "26",
+                            "feelsLike": "27",
+                            "humidity": "35",
+                            "windDir": "东北风",
+                        },
+                    }
+                )
+
+        with patch("agent.tools.weather.httpx.Client", _FakeClient):
+            tool = build_weather_tool(self._settings(weather_api_key="weather-key"))
+            result = tool("北京", "now")
+
+        self.assertIn("北京当前天气：晴", result)
+        self.assertIn("气温 26°C", result)
+
+    def test_web_search_tool_reports_missing_api_key(self) -> None:
+        tool = build_web_search_tool(self._settings(serpapi_api_key=""))
+
+        result = tool("红烧肉 做法")
+
+        self.assertIn("SERPAPI_API_KEY", result)
+
+    def test_web_search_tool_returns_organic_results(self) -> None:
+        class _FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "organic_results": [
+                        {
+                            "title": "红烧肉做法",
+                            "link": "https://example.com/recipe",
+                            "snippet": "家常红烧肉步骤。",
+                        }
+                    ]
+                }
+
+        class _FakeClient:
+            def __init__(self, timeout):
+                self.timeout = timeout
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return None
+
+            def get(self, url, params):
+                return _FakeResponse()
+
+        with patch("agent.tools.web_search.httpx.Client", _FakeClient):
+            tool = build_web_search_tool(self._settings(serpapi_api_key="serp-key"))
+            result = tool("红烧肉 做法", 3)
+
+        self.assertIn("红烧肉做法", result)
+        self.assertIn("https://example.com/recipe", result)
 
     def test_rag_context_builder_marks_miss_when_default_retrieval_has_no_chunks(self) -> None:
         with patch("agent.rag.context_builder.RagRetriever") as retriever_cls:
@@ -360,14 +466,89 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
         self.assertEqual(result.reply_text, "可以做蛋炒饭。")
         self.assertEqual(compiled_agent.invoked_payload["messages"], ["fake-message"])
 
-    def test_kimi_provider_does_not_send_glm_thinking_parameter(self) -> None:
+    def test_runner_tries_next_model_candidate_after_failure(self) -> None:
+        fake_agents_module = types.ModuleType("langchain.agents")
+        fake_langchain_module = types.ModuleType("langchain")
+
+        class _FakeCompiledAgent:
+            def __init__(self, model):
+                self.model = model
+
+            def invoke(self, payload):
+                _ = payload
+                if self.model == "primary-model":
+                    raise RuntimeError("primary unavailable")
+                return {
+                    "messages": [
+                        SimpleNamespace(type="human", content="hi"),
+                        SimpleNamespace(type="ai", content="备用模型回答。"),
+                    ]
+                }
+
+        def create_agent(*, model, tools, system_prompt):
+            _ = tools
+            _ = system_prompt
+            return _FakeCompiledAgent(model)
+
+        fake_agents_module.create_agent = create_agent
+        fake_langchain_module.agents = fake_agents_module
+        settings = self._settings(
+            agent_model_candidates=[
+                AgentModelCandidate(
+                    provider="kimi",
+                    base_url="https://primary.example/v1",
+                    api_key="primary-key",
+                    model_name="kimi-k2.6",
+                ),
+                AgentModelCandidate(
+                    provider="aihubmix",
+                    base_url="https://backup.example/v1",
+                    api_key="backup-key",
+                    model_name="glm-4.7-flash-free",
+                ),
+            ]
+        )
+
+        with patch.dict(
+            sys.modules,
+            {
+                "langchain": fake_langchain_module,
+                "langchain.agents": fake_agents_module,
+            },
+        ), patch(
+            "agent.runner.build_chat_model",
+            side_effect=["primary-model", "backup-model"],
+        ), patch(
+            "agent.runner.build_tools",
+            return_value=["fake-tool"],
+        ), patch(
+            "agent.runner.build_langchain_messages",
+            return_value=["fake-message"],
+        ):
+            result = LangChainAgentRunner(settings=settings).run(self._context())
+
+        self.assertEqual(result.reply_text, "备用模型回答。")
+        self.assertEqual(result.model_name, "glm-4.7-flash-free")
+        self.assertEqual(result.output_snapshot["provider"], "aihubmix")
+        self.assertTrue(result.output_snapshot["model_fallback"]["used_fallback"])
+        self.assertEqual(result.output_snapshot["model_fallback"]["used_priority"], 2)
+        self.assertEqual(
+            result.output_snapshot["model_fallback"]["attempts"][0]["status"],
+            "failed",
+        )
+        self.assertEqual(
+            result.output_snapshot["model_fallback"]["attempts"][1]["status"],
+            "succeeded",
+        )
+
+    def test_kimi_provider_disables_thinking_for_tool_call_compatibility(self) -> None:
         settings = self._settings(
             agent_model_provider="kimi",
             agent_model_name="kimi-k2.6",
             agent_disable_reasoning=True,
         )
 
-        self.assertFalse(_should_disable_reasoning(settings, "kimi"))
+        self.assertTrue(_should_disable_reasoning(settings, "kimi"))
 
     def test_kimi_provider_forces_supported_temperature(self) -> None:
         settings = self._settings(
@@ -398,6 +579,34 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
         self.assertEqual(settings.agent_model_base_url, "https://api.moonshot.cn/v1")
         self.assertEqual(settings.agent_model_api_key, "kimi-key")
         self.assertEqual(settings.agent_model_name, "kimi-k2.6")
+
+    def test_settings_builds_agent_model_fallback_candidates_in_configured_order(self) -> None:
+        env = {
+            "AGENT_MODEL_PROVIDER": "kimi",
+            "AGENT_MODEL_FALLBACK_ORDER": "kimi,xiaomi,aihubmix,local",
+            "KIMI_BASE_URL": "https://api.moonshot.cn/v1",
+            "KIMI_API_KEY": "kimi-key",
+            "KIMI_MODEL_ID": "kimi-k2.6",
+            "XIAOMI_BASE_URL": "https://api.xiaomi.example/v1",
+            "XIAOMI_API_KEY": "xiaomi-key",
+            "XIAOMI_MODEL_ID": "mimo-v2.5-pro",
+            "AIHUBMIX_BASE_URL": "https://aihubmix.example/v1",
+            "AIHUBMIX_API_KEY": "aihubmix-key",
+            "AIHUBMIX_MODEL_ID": "glm-4.7-flash-free",
+            "LOCAL_MODEL_BASE_URL": "http://127.0.0.1:11434/v1",
+            "LOCAL_MODEL_ID": "qwen2.5:7b",
+        }
+
+        with patch.dict("os.environ", env, clear=True):
+            get_settings.cache_clear()
+            settings = get_settings()
+            get_settings.cache_clear()
+
+        self.assertEqual(
+            [candidate.provider for candidate in settings.agent_model_candidates],
+            ["kimi", "xiaomi", "aihubmix", "local"],
+        )
+        self.assertEqual(settings.agent_model_candidates[-1].api_key, "not-needed")
 
 
 if __name__ == "__main__":

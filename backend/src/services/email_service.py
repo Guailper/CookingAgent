@@ -1,4 +1,4 @@
-"""SMTP email delivery service."""
+"""SMTP 邮件发送服务。"""
 
 from email.message import EmailMessage
 import smtplib
@@ -6,16 +6,19 @@ import ssl
 
 from src.core.config import Settings
 from src.core.exceptions import AppException
+from src.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class EmailService:
-    """Sends authentication emails through a configured SMTP account."""
+    """通过配置好的 SMTP 账号发送认证邮件。"""
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
     def send_verification_code(self, email: str, code: str, purpose: str, expires_minutes: int) -> None:
-        """Send a short-lived verification code email."""
+        """发送短期有效的邮箱验证码。"""
 
         if not self._is_configured():
             raise AppException(
@@ -53,6 +56,7 @@ class EmailService:
                 ) as smtp:
                     smtp.login(self.settings.smtp_user, self.settings.smtp_password)
                     smtp.send_message(message)
+                logger.info("Verification email sent through SMTP SSL.", extra={"email": email, "purpose": purpose})
                 return
 
             with smtplib.SMTP(
@@ -64,13 +68,16 @@ class EmailService:
                     smtp.starttls(context=ssl.create_default_context())
                 smtp.login(self.settings.smtp_user, self.settings.smtp_password)
                 smtp.send_message(message)
+            logger.info("Verification email sent through SMTP.", extra={"email": email, "purpose": purpose})
         except smtplib.SMTPException as exc:
+            logger.warning("Verification email SMTP send failed.", exc_info=exc)
             raise AppException(
                 502,
                 "EMAIL_SEND_FAILED",
                 "验证码邮件发送失败，请稍后重试。",
             ) from exc
         except OSError as exc:
+            logger.warning("Verification email SMTP server unreachable.", exc_info=exc)
             raise AppException(
                 502,
                 "EMAIL_SERVER_UNREACHABLE",

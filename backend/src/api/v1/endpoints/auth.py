@@ -1,9 +1,12 @@
-"""认证接口实现。"""
+"""Authentication API endpoints."""
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.orm import Session
 
 from src.api.deps import get_current_user, get_db_session
+from src.cache.cache_service import CacheService
+from src.cache.rate_limiter import RateLimiter
+from src.core.config import get_settings
 from src.schemas.auth import (
     AuthPayload,
     AuthResponse,
@@ -29,9 +32,22 @@ router = APIRouter()
 )
 async def send_email_code(
     payload: SendEmailCodeRequest,
+    request: Request,
     db: Session = Depends(get_db_session),
 ) -> MessageResponse:
-    """发送注册或登录使用的邮箱验证码。"""
+    """Send a registration or login verification code."""
+
+    settings = get_settings()
+    cache = CacheService(settings)
+    client_id = _request_client_id(request)
+    normalized_email = payload.email.strip().lower()
+    RateLimiter(cache).require_allowed(
+        key=cache.build_key("rate_limit", "email_code", payload.purpose, normalized_email, client_id),
+        limit=settings.email_code_rate_limit_count,
+        window_seconds=settings.email_code_rate_limit_window_seconds,
+        error_code="EMAIL_CODE_RATE_LIMITED",
+        message="验证码请求过于频繁，请稍后再试。",
+    )
 
     AuthService(db).send_email_code(
         email=payload.email,
@@ -50,7 +66,7 @@ async def register(
     payload: RegisterRequest,
     db: Session = Depends(get_db_session),
 ) -> AuthResponse:
-    """注册用户并返回登录令牌。"""
+    """Register a user and return an access token."""
 
     user, access_token = AuthService(db).register_user(
         username=payload.username,
@@ -70,10 +86,12 @@ async def register(
 @router.post("/login", response_model=AuthResponse, summary="密码登录")
 async def login(
     payload: LoginRequest,
+    request: Request,
     db: Session = Depends(get_db_session),
 ) -> AuthResponse:
-    """密码登录并返回访问令牌。"""
+    """Login with password and return an access token."""
 
+    _apply_login_rate_limit(request, payload.email)
     user, access_token = AuthService(db).login_user(
         email=payload.email,
         password=payload.password,
@@ -90,10 +108,12 @@ async def login(
 @router.post("/email-code/login", response_model=AuthResponse, summary="邮箱验证码登录")
 async def login_with_email_code(
     payload: EmailCodeLoginRequest,
+    request: Request,
     db: Session = Depends(get_db_session),
 ) -> AuthResponse:
-    """邮箱验证码登录并返回访问令牌。"""
+    """Login with an email verification code and return an access token."""
 
+    _apply_login_rate_limit(request, payload.email)
     user, access_token = AuthService(db).login_user_with_email_code(
         email=payload.email,
         email_code=payload.email_code,
@@ -109,7 +129,7 @@ async def login_with_email_code(
 
 @router.get("/me", response_model=CurrentUserResponse, summary="获取当前用户")
 async def get_me(current_user=Depends(get_current_user)) -> CurrentUserResponse:
-    """返回当前登录用户信息。"""
+    """Return current signed-in user profile."""
 
     return CurrentUserResponse(
         message="获取当前用户成功。",
@@ -123,7 +143,7 @@ async def update_me(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db_session),
 ) -> CurrentUserResponse:
-    """更新当前登录用户的昵称等基础资料。"""
+    """Update current signed-in user's basic profile."""
 
     user = AuthService(db).update_user_profile(
         user=current_user,
@@ -141,7 +161,7 @@ async def change_password(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db_session),
 ) -> MessageResponse:
-    """校验当前密码后修改当前登录用户密码。"""
+    """Validate current password and change it."""
 
     AuthService(db).change_password(
         user=current_user,
@@ -149,3 +169,24 @@ async def change_password(
         new_password=payload.new_password,
     )
     return MessageResponse(message="密码已更新，请使用新密码登录。")
+
+
+def _apply_login_rate_limit(request: Request, email: str) -> None:
+    settings = get_settings()
+    cache = CacheService(settings)
+    RateLimiter(cache).require_allowed(
+        key=cache.build_key("rate_limit", "login", email.strip().lower(), _request_client_id(request)),
+        limit=settings.login_rate_limit_count,
+        window_seconds=settings.login_rate_limit_window_seconds,
+        error_code="LOGIN_RATE_LIMITED",
+        message="登录尝试过于频繁，请稍后再试。",
+    )
+
+
+def _request_client_id(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        return forwarded_for.split(",", maxsplit=1)[0].strip()
+    if request.client is not None:
+        return request.client.host
+    return "unknown"

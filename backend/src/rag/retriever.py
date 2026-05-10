@@ -1,6 +1,11 @@
 """High-level RAG retrieval workflow."""
 
+from dataclasses import asdict
+import hashlib
+import json
+
 from agent.contracts import RetrievedChunk
+from src.cache.cache_service import CacheService
 from src.core.config import Settings, get_settings
 from src.rag.embedding_client import EmbeddingClient
 from src.rag.milvus_repository import MilvusChunkRecord, MilvusRagRepository
@@ -18,6 +23,7 @@ class RagRetriever:
         rerank_client: RerankClient | None = None,
     ) -> None:
         self.settings = settings or get_settings()
+        self.cache = CacheService(self.settings)
         self.embedding_client = embedding_client or EmbeddingClient(self.settings)
         self.repository = repository or MilvusRagRepository(self.settings)
         self.rerank_client = rerank_client or RerankClient(self.settings)
@@ -35,19 +41,37 @@ class RagRetriever:
         if not normalized_query or not knowledge_base_public_ids:
             return []
 
+        normalized_knowledge_base_ids = self._dedupe_ids(knowledge_base_public_ids)
+        resolved_final_top_k = max(1, final_top_k or self.settings.rag_final_top_k)
+        resolved_vector_top_k = vector_top_k or self.settings.rag_vector_top_k
+        cache_key = self._retrieve_cache_key(
+            query=normalized_query,
+            knowledge_base_public_ids=normalized_knowledge_base_ids,
+            final_top_k=resolved_final_top_k,
+            vector_top_k=resolved_vector_top_k,
+        )
+        cached_chunks = self.cache.get_json(cache_key)
+        if isinstance(cached_chunks, list):
+            return [RetrievedChunk(**chunk) for chunk in cached_chunks if isinstance(chunk, dict)]
+
         query_embedding = self.embedding_client.embed_query(normalized_query)
         candidates = self.repository.search(
             query_embedding=query_embedding,
-            knowledge_base_public_ids=self._dedupe_ids(knowledge_base_public_ids),
-            top_k=vector_top_k or self.settings.rag_vector_top_k,
+            knowledge_base_public_ids=normalized_knowledge_base_ids,
+            top_k=resolved_vector_top_k,
             min_score=self.settings.rag_min_score,
         )
         if not candidates:
             return []
 
         ranked_candidates = self._rerank_or_keep_vector_order(normalized_query, candidates)
-        limit = max(1, final_top_k or self.settings.rag_final_top_k)
-        return [self._to_retrieved_chunk(record) for record in ranked_candidates[:limit]]
+        chunks = [self._to_retrieved_chunk(record) for record in ranked_candidates[:resolved_final_top_k]]
+        self.cache.set_json(
+            cache_key,
+            [asdict(chunk) for chunk in chunks],
+            self.settings.rag_cache_ttl_seconds,
+        )
+        return chunks
 
     def _rerank_or_keep_vector_order(
         self,
@@ -124,3 +148,22 @@ class RagRetriever:
                 seen.add(normalized)
         return deduped
 
+    def _retrieve_cache_key(
+        self,
+        *,
+        query: str,
+        knowledge_base_public_ids: list[str],
+        final_top_k: int,
+        vector_top_k: int,
+    ) -> str:
+        payload = {
+            "query": query,
+            "knowledge_base_public_ids": knowledge_base_public_ids,
+            "final_top_k": final_top_k,
+            "vector_top_k": vector_top_k,
+            "min_score": self.settings.rag_min_score,
+            "collection": self.settings.milvus_collection,
+        }
+        payload_text = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        digest = hashlib.sha256(payload_text.encode("utf-8")).hexdigest()
+        return self.cache.build_key("rag", "retrieve", digest)

@@ -30,6 +30,8 @@ export default function LoginPage({ onAuthenticated }: LoginPageProps) {
     registerCodeCooldown,
     isSendingLoginCode,
     isSendingRegisterCode,
+    loginCodeMessage,
+    registerCodeMessage,
     updateLoginForm,
     updateRegisterForm,
     switchMode,
@@ -58,6 +60,7 @@ export default function LoginPage({ onAuthenticated }: LoginPageProps) {
               loginMethod={loginMethod}
               codeCooldown={loginCodeCooldown}
               isSendingCode={isSendingLoginCode}
+              codeMessage={loginCodeMessage}
               onFieldChange={updateLoginForm}
               onLoginMethodChange={switchLoginMethod}
               onForgotPassword={handleForgotPassword}
@@ -80,6 +83,7 @@ export default function LoginPage({ onAuthenticated }: LoginPageProps) {
               form={registerForm}
               codeCooldown={registerCodeCooldown}
               isSendingCode={isSendingRegisterCode}
+              codeMessage={registerCodeMessage}
               onFieldChange={updateRegisterForm}
               onSendEmailCode={handleSendRegisterEmailCode}
               onSubmit={handleRegisterSubmit}

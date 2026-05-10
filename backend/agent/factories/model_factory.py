@@ -2,14 +2,29 @@
 
 from typing import Any
 
-from src.core.config import Settings
+from src.core.config import AgentModelCandidate, Settings
 from src.core.exceptions import AppException
 
 
-def build_chat_model(settings: Settings) -> Any:
+def build_chat_model(
+    settings: Settings,
+    model_config: AgentModelCandidate | None = None,
+) -> Any:
     """Create the configured OpenAI-compatible LangChain chat model."""
 
-    provider = settings.agent_model_provider.strip().lower()
+    provider = (
+        model_config.provider if model_config is not None else settings.agent_model_provider
+    ).strip().lower()
+    base_url = (
+        model_config.base_url if model_config is not None else settings.agent_model_base_url
+    ).strip()
+    api_key = (
+        model_config.api_key if model_config is not None else settings.agent_model_api_key
+    ).strip()
+    model_name = (
+        model_config.model_name if model_config is not None else settings.agent_model_name
+    ).strip()
+
     if provider == "disabled":
         raise AppException(
             503,
@@ -17,14 +32,22 @@ def build_chat_model(settings: Settings) -> Any:
             "智能体模型尚未配置，请补充 AGENT_MODEL_BASE_URL 和 AGENT_MODEL_API_KEY。",
         )
 
-    if provider not in {"openai_compatible", "openai", "aihubmix", "kimi", "moonshot"}:
+    if provider not in {
+        "openai_compatible",
+        "openai",
+        "aihubmix",
+        "kimi",
+        "moonshot",
+        "xiaomi",
+        "local",
+    }:
         raise AppException(
             503,
             "AGENT_MODEL_PROVIDER_UNSUPPORTED",
             f"当前智能体 provider `{provider}` 暂不支持。",
         )
 
-    if not settings.agent_model_base_url or not settings.agent_model_api_key:
+    if not base_url or not api_key:
         raise AppException(
             503,
             "AGENT_MODEL_NOT_CONFIGURED",
@@ -41,16 +64,16 @@ def build_chat_model(settings: Settings) -> Any:
         ) from exc
 
     model_kwargs: dict[str, Any] = {}
-    if _should_disable_reasoning(settings, provider):
+    if _should_disable_reasoning(settings, provider, model_name):
         # 部分兼容 OpenAI 的推理模型会把预算消耗在 reasoning_content。
         # 这里延续旧实现的保护逻辑，确保最终回复进入普通 content 字段。
         model_kwargs["thinking"] = {"type": "disabled"}
 
     return ChatOpenAI(
-        model=settings.agent_model_name,
-        api_key=settings.agent_model_api_key,
-        base_url=settings.agent_model_base_url.rstrip("/"),
-        temperature=_resolve_temperature(settings, provider),
+        model=model_name,
+        api_key=api_key,
+        base_url=base_url.rstrip("/"),
+        temperature=_resolve_temperature(settings, provider, model_name),
         max_tokens=(
             settings.agent_max_output_tokens
             if settings.agent_max_output_tokens > 0
@@ -61,7 +84,11 @@ def build_chat_model(settings: Settings) -> Any:
     )
 
 
-def _resolve_temperature(settings: Settings, provider: str) -> float:
+def _resolve_temperature(
+    settings: Settings,
+    provider: str,
+    model_name: str | None = None,
+) -> float:
     """返回当前 provider 可接受的 temperature。
 
     Moonshot/Kimi 的部分模型会拒绝非 1 的 temperature。项目 `.env` 里
@@ -69,14 +96,18 @@ def _resolve_temperature(settings: Settings, provider: str) -> float:
     避免运行时因为供应商参数约束进入 fallback。
     """
 
-    model_name = settings.agent_model_name.strip().lower()
-    if provider in {"kimi", "moonshot"} or model_name.startswith("kimi-"):
+    normalized_model_name = (model_name or settings.agent_model_name).strip().lower()
+    if provider in {"kimi", "moonshot"} or normalized_model_name.startswith("kimi-"):
         return 1.0
 
     return settings.agent_temperature
 
 
-def _should_disable_reasoning(settings: Settings, provider: str) -> bool:
+def _should_disable_reasoning(
+    settings: Settings,
+    provider: str,
+    model_name: str | None = None,
+) -> bool:
     """判断是否要传递供应商专用的关闭推理参数。
 
     `.env` 里可以保留 `AGENT_DISABLE_REASONING=true`，但 Kimi/Moonshot 的
@@ -87,8 +118,11 @@ def _should_disable_reasoning(settings: Settings, provider: str) -> bool:
     if not settings.agent_disable_reasoning:
         return False
 
-    model_name = settings.agent_model_name.strip().lower()
-    if provider in {"aihubmix"} and model_name.startswith("glm-"):
+    normalized_model_name = (model_name or settings.agent_model_name).strip().lower()
+    if provider in {"kimi", "moonshot"} or normalized_model_name.startswith("kimi-"):
         return True
 
-    return model_name.startswith("glm-")
+    if provider in {"aihubmix"} and normalized_model_name.startswith("glm-"):
+        return True
+
+    return normalized_model_name.startswith("glm-")

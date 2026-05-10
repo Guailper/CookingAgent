@@ -1,5 +1,7 @@
 """后端统一配置中心。"""
 
+from __future__ import annotations
+
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -166,6 +168,141 @@ def _resolve_agent_model_name(provider: str) -> str:
     ).strip()
 
 
+def _get_agent_model_fallback_order(primary_provider: str) -> list[str]:
+    """Return provider priority for model fallback."""
+
+    configured_order = _get_csv_env("AGENT_MODEL_FALLBACK_ORDER", [])
+    if configured_order:
+        return configured_order
+
+    order = [primary_provider]
+    if os.getenv("XIAOMI_BASE_URL") and os.getenv("XIAOMI_API_KEY"):
+        order.append("xiaomi")
+    if os.getenv("AIHUBMIX_BASE_URL") and os.getenv("AIHUBMIX_API_KEY"):
+        order.append("aihubmix")
+    if (
+        os.getenv("LOCAL_MODEL_BASE_URL")
+        or os.getenv("OLLAMA_BASE_URL")
+        or os.getenv("LOCAL_MODEL_ID")
+        or os.getenv("LOCAL_MODEL_NAME")
+        or os.getenv("OLLAMA_MODEL_ID")
+        or os.getenv("OLLAMA_MODEL_NAME")
+    ):
+        order.append("local")
+
+    return order
+
+
+def _build_agent_model_candidates(
+    *,
+    primary_provider: str,
+    primary_base_url: str,
+    primary_api_key: str,
+    primary_model_name: str,
+) -> list[AgentModelCandidate]:
+    """Build configured model endpoints in retry priority order."""
+
+    candidates: list[AgentModelCandidate] = []
+    seen_providers: set[str] = set()
+    for raw_provider in _get_agent_model_fallback_order(primary_provider):
+        provider = _normalize_agent_fallback_provider(raw_provider, primary_provider)
+        if not provider or provider in seen_providers:
+            continue
+
+        candidate = _resolve_agent_model_candidate(
+            provider=provider,
+            primary_provider=primary_provider,
+            primary_base_url=primary_base_url,
+            primary_api_key=primary_api_key,
+            primary_model_name=primary_model_name,
+        )
+        if candidate is None:
+            continue
+
+        seen_providers.add(provider)
+        candidates.append(candidate)
+
+    return candidates
+
+
+def _normalize_agent_fallback_provider(raw_provider: str, primary_provider: str) -> str:
+    provider = (raw_provider or "").strip().lower()
+    if provider in {"primary", "default"}:
+        return primary_provider
+    if provider == "ollama":
+        return "local"
+    return provider
+
+
+def _resolve_agent_model_candidate(
+    *,
+    provider: str,
+    primary_provider: str,
+    primary_base_url: str,
+    primary_api_key: str,
+    primary_model_name: str,
+) -> AgentModelCandidate | None:
+    if provider == "disabled":
+        return None
+
+    if provider == primary_provider:
+        base_url = primary_base_url
+        api_key = primary_api_key
+        model_name = primary_model_name
+    elif provider in {"kimi", "moonshot"}:
+        base_url = os.getenv("KIMI_BASE_URL", "").strip()
+        api_key = os.getenv("KIMI_API_KEY", "").strip()
+        model_name = os.getenv("KIMI_MODEL_ID", "kimi-k2.6").strip()
+    elif provider == "xiaomi":
+        base_url = os.getenv("XIAOMI_BASE_URL", "").strip()
+        api_key = os.getenv("XIAOMI_API_KEY", "").strip()
+        model_name = os.getenv("XIAOMI_MODEL_ID", "").strip()
+    elif provider == "aihubmix":
+        base_url = os.getenv("AIHUBMIX_BASE_URL", "").strip()
+        api_key = os.getenv("AIHUBMIX_API_KEY", "").strip()
+        model_name = os.getenv("AIHUBMIX_MODEL_ID", "gpt-4o-mini").strip()
+    elif provider == "openai":
+        base_url = (
+            os.getenv("OPENAI_BASE_URL")
+            or os.getenv("OPENAI_API_BASE")
+            or "https://api.openai.com/v1"
+        ).strip()
+        api_key = os.getenv("OPENAI_API_KEY", "").strip()
+        model_name = os.getenv("OPENAI_MODEL_ID", "gpt-4o-mini").strip()
+    elif provider == "local":
+        base_url = (
+            os.getenv("LOCAL_MODEL_BASE_URL")
+            or os.getenv("OLLAMA_BASE_URL")
+            or ""
+        ).strip()
+        api_key = (
+            os.getenv("LOCAL_MODEL_API_KEY")
+            or os.getenv("OLLAMA_API_KEY")
+            or "not-needed"
+        ).strip()
+        model_name = (
+            os.getenv("LOCAL_MODEL_ID")
+            or os.getenv("LOCAL_MODEL_NAME")
+            or os.getenv("OLLAMA_MODEL_ID")
+            or os.getenv("OLLAMA_MODEL_NAME")
+            or ""
+        ).strip()
+    else:
+        return None
+
+    if not base_url or not model_name:
+        return None
+    if provider != "local" and not api_key:
+        return None
+
+    return AgentModelCandidate(
+        provider=provider,
+        base_url=base_url,
+        api_key=api_key,
+        model_name=model_name,
+    )
+
+
 def _resolve_project_path(raw_path: str) -> str:
     """把项目根目录下的相对路径解析成绝对路径。"""
 
@@ -185,6 +322,16 @@ def _get_csv_env(name: str, default: list[str]) -> list[str]:
 
     values = [value.strip() for value in raw_value.split(",")]
     return [value for value in values if value]
+
+
+@dataclass(frozen=True)
+class AgentModelCandidate:
+    """One OpenAI-compatible chat model endpoint in the fallback chain."""
+
+    provider: str
+    base_url: str
+    api_key: str
+    model_name: str
 
 
 @dataclass(frozen=True)
@@ -208,6 +355,20 @@ class Settings:
     smtp_use_ssl: bool
     smtp_use_tls: bool
     smtp_timeout_seconds: int
+    redis_enabled: bool
+    redis_url: str
+    redis_key_prefix: str
+    redis_socket_timeout_seconds: int
+    current_user_cache_ttl_seconds: int
+    conversation_cache_ttl_seconds: int
+    message_cache_ttl_seconds: int
+    rag_cache_ttl_seconds: int
+    email_code_rate_limit_count: int
+    email_code_rate_limit_window_seconds: int
+    login_rate_limit_count: int
+    login_rate_limit_window_seconds: int
+    agent_rate_limit_count: int
+    agent_rate_limit_window_seconds: int
 
     mysql_host: str
     mysql_port: int
@@ -241,6 +402,14 @@ class Settings:
     agent_temperature: float
     agent_max_output_tokens: int
     agent_disable_reasoning: bool
+    agent_model_candidates: list[AgentModelCandidate]
+    weather_api_key: str
+    weather_api_base_url: str
+    weather_geo_base_url: str
+    weather_request_timeout_seconds: int
+    serpapi_api_key: str
+    serpapi_search_url: str
+    web_search_request_timeout_seconds: int
 
     project_root: str
     rag_embedding_provider: str
@@ -333,6 +502,23 @@ def get_settings() -> Settings:
         smtp_use_ssl=_get_bool_env("SMTP_USE_SSL", True),
         smtp_use_tls=_get_bool_env("SMTP_USE_TLS", False),
         smtp_timeout_seconds=_get_int_env("SMTP_TIMEOUT_SECONDS", 10),
+        redis_enabled=_get_bool_env("REDIS_ENABLED", False),
+        redis_url=os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0").strip(),
+        redis_key_prefix=os.getenv("REDIS_KEY_PREFIX", "cooking_agent").strip(),
+        redis_socket_timeout_seconds=_get_int_env("REDIS_SOCKET_TIMEOUT_SECONDS", 2),
+        current_user_cache_ttl_seconds=_get_int_env("CURRENT_USER_CACHE_TTL_SECONDS", 300),
+        conversation_cache_ttl_seconds=_get_int_env("CONVERSATION_CACHE_TTL_SECONDS", 60),
+        message_cache_ttl_seconds=_get_int_env("MESSAGE_CACHE_TTL_SECONDS", 60),
+        rag_cache_ttl_seconds=_get_int_env("RAG_CACHE_TTL_SECONDS", 1800),
+        email_code_rate_limit_count=_get_int_env("EMAIL_CODE_RATE_LIMIT_COUNT", 5),
+        email_code_rate_limit_window_seconds=_get_int_env(
+            "EMAIL_CODE_RATE_LIMIT_WINDOW_SECONDS",
+            300,
+        ),
+        login_rate_limit_count=_get_int_env("LOGIN_RATE_LIMIT_COUNT", 10),
+        login_rate_limit_window_seconds=_get_int_env("LOGIN_RATE_LIMIT_WINDOW_SECONDS", 300),
+        agent_rate_limit_count=_get_int_env("AGENT_RATE_LIMIT_COUNT", 20),
+        agent_rate_limit_window_seconds=_get_int_env("AGENT_RATE_LIMIT_WINDOW_SECONDS", 300),
         mysql_host=os.getenv("MYSQL_HOST", "127.0.0.1"),
         mysql_port=_get_int_env("MYSQL_PORT", 3306),
         mysql_database=os.getenv("MYSQL_DATABASE", "cooking_agent_db"),
@@ -376,6 +562,38 @@ def get_settings() -> Settings:
         agent_disable_reasoning=_get_bool_env(
             "AGENT_DISABLE_REASONING",
             agent_model_name.strip().lower().startswith("glm-"),
+        ),
+        agent_model_candidates=_build_agent_model_candidates(
+            primary_provider=agent_provider,
+            primary_base_url=agent_base_url.strip(),
+            primary_api_key=agent_api_key.strip(),
+            primary_model_name=agent_model_name.strip(),
+        ),
+        weather_api_key=(
+            os.getenv("WEATHER_API_KEY")
+            or ""
+        ).strip(),
+        weather_api_base_url=os.getenv(
+            "WEATHER_API_BASE_URL",
+            "https://devapi.qweather.com",
+        ).strip(),
+        weather_geo_base_url=os.getenv(
+            "WEATHER_GEO_BASE_URL",
+            "https://geoapi.qweather.com",
+        ).strip(),
+        weather_request_timeout_seconds=_get_int_env("WEATHER_REQUEST_TIMEOUT_SECONDS", 10),
+        serpapi_api_key=(
+            os.getenv("SERPAPI_API_KEY")
+            or os.getenv("SERP_API_KEY")
+            or ""
+        ).strip(),
+        serpapi_search_url=os.getenv(
+            "SERPAPI_SEARCH_URL",
+            "https://serpapi.com/search.json",
+        ).strip(),
+        web_search_request_timeout_seconds=_get_int_env(
+            "WEB_SEARCH_REQUEST_TIMEOUT_SECONDS",
+            15,
         ),
         project_root=str(PROJECT_ROOT.resolve()),
         rag_embedding_provider=os.getenv(

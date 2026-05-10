@@ -158,11 +158,19 @@ class MilvusRagRepository:
                 "缺少 pymilvus 依赖，无法连接 Milvus。",
             ) from exc
 
-        self._client = MilvusClient(
-            uri=self.settings.milvus_uri,
-            token=self.settings.milvus_token or None,
-            db_name=self.settings.milvus_database or "default",
-        )
+        try:
+            self._client = MilvusClient(
+                uri=self.settings.milvus_uri,
+                token=self.settings.milvus_token or None,
+                db_name=self.settings.milvus_database or "default",
+                timeout=getattr(self.settings, "rag_request_timeout_seconds", 30),
+            )
+        except Exception as exc:
+            raise AppException(
+                503,
+                "RAG_MILVUS_UNAVAILABLE",
+                f"Milvus 服务不可用，请检查 MILVUS_URI={self.settings.milvus_uri} 并确认服务已启动。",
+            ) from exc
         return self._client
 
     def _record_to_row(self, record: MilvusChunkRecord) -> dict[str, Any]:

@@ -27,3 +27,6 @@ python-multipart>=0.0.9,<1.0
 
 # Local speech-to-text fallback/replacement for external voice APIs
 faster-whisper>=1.1,<2.0
+
+# Optional Redis cache, rate limit, and short-lived verification code storage
+redis>=5.0,<6.0

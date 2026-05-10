@@ -45,6 +45,7 @@ Thumbs.db
 
 # md
 *.md
+!README.md
 models/*
 data/*
 .gitignore

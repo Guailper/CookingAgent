@@ -11,6 +11,7 @@ from agent.workflows.memory_update_workflow import MemoryUpdateWorkflow
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from src.cache.cache_service import CacheService
 from src.core.constants import (
     AGENT_RUN_STATUS_COMPLETED,
     AGENT_RUN_STATUS_FAILED,
@@ -48,6 +49,7 @@ class AgentService:
         self.agent_run_repository = AgentRunRepository(db)
         self.conversation_repository = ConversationRepository(db)
         self.agent_runner = LangChainAgentRunner()
+        self.cache = CacheService(self.agent_runner.settings)
         self.agent_orchestrator = AgentOrchestrator(db, runner=self.agent_runner)
 
     def chat(
@@ -124,6 +126,7 @@ class AgentService:
                 started_at=started_at,
                 error_code=exc.code,
                 error_message=exc.message,
+                error_detail=exc.detail,
             )
         except IntegrityError as exc:
             self.db.rollback()
@@ -324,6 +327,7 @@ class AgentService:
         agent_run.completed_at = datetime.utcnow()
         conversation.latest_message_at = datetime.utcnow()
         self.db.commit()
+        self._invalidate_conversation_cache(conversation.public_id, conversation.user_id)
 
         refreshed_assistant_message = self.message_repository.get_by_id(assistant_message.id)
         if refreshed_assistant_message is None:
@@ -341,6 +345,7 @@ class AgentService:
         started_at: datetime,
         error_code: str,
         error_message: str,
+        error_detail: Any | None = None,
     ) -> tuple[Message, Message, AgentRun]:
         """保存“LangChain Agent 失败但本地降级成功”的结果。"""
 
@@ -374,6 +379,13 @@ class AgentService:
         degraded_agent_run.output_snapshot["degraded"] = True
         degraded_agent_run.output_snapshot["primary_failure_code"] = error_code
         degraded_agent_run.output_snapshot["primary_failure_message"] = error_message
+        if isinstance(error_detail, dict):
+            model_attempts = error_detail.get("model_fallback_attempts")
+            if isinstance(model_attempts, list):
+                degraded_agent_run.output_snapshot["model_fallback"] = {
+                    "all_failed": True,
+                    "attempts": model_attempts,
+                }
         degraded_agent_run.completed_at = datetime.utcnow()
         self.db.commit()
 
@@ -430,6 +442,7 @@ class AgentService:
         self.message_repository.create(assistant_message)
         conversation.latest_message_at = datetime.utcnow()
         self.db.commit()
+        self._invalidate_conversation_cache(conversation.public_id, conversation.user_id)
 
         refreshed_assistant_message = self.message_repository.get_by_id(assistant_message.id)
         refreshed_failed_run = self.agent_run_repository.get_by_id(failed_run.id)
@@ -482,3 +495,9 @@ class AgentService:
             "provider": output_snapshot.get("provider"),
             "primary_failure_code": output_snapshot.get("primary_failure_code"),
         }
+
+    def _invalidate_conversation_cache(self, conversation_public_id: str, user_id: int) -> None:
+        self.cache.delete(
+            self.cache.build_key("messages", "conversation", conversation_public_id),
+            self.cache.build_key("conversations", "user", user_id),
+        )

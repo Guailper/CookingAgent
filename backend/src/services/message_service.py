@@ -7,6 +7,8 @@ from typing import Any
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from src.cache.cache_service import CacheService
+from src.core.config import get_settings
 from src.core.constants import (
     INPUT_SOURCE_KEYBOARD,
     MESSAGE_ROLE_USER,
@@ -20,6 +22,7 @@ from src.db.models.user import User
 from src.repositories.attachment_repository import AttachmentRepository
 from src.repositories.conversation_repository import ConversationRepository
 from src.repositories.message_repository import MessageRepository
+from src.schemas.message import MessageItem
 
 
 class MessageService:
@@ -27,6 +30,8 @@ class MessageService:
 
     def __init__(self, db: Session) -> None:
         self.db = db
+        self.settings = get_settings()
+        self.cache = CacheService(self.settings)
         self.message_repository = MessageRepository(db)
         self.attachment_repository = AttachmentRepository(db)
         self.conversation_repository = ConversationRepository(db)
@@ -84,13 +89,15 @@ class MessageService:
             self.db.rollback()
             raise AppException(409, "MESSAGE_CREATE_CONFLICT", "消息创建时发生冲突。") from exc
 
+        self._invalidate_message_related_cache(user_id=user.id, conversation_public_id=conversation_public_id)
+
         bound_message = self.message_repository.get_by_id(message.id)
         if bound_message is None:
             raise AppException(500, "MESSAGE_LOAD_FAILED", "消息创建成功，但回读消息失败。")
 
         return bound_message
 
-    def list_conversation_messages(self, user: User, conversation_public_id: str) -> list[Message]:
+    def list_conversation_messages(self, user: User, conversation_public_id: str) -> list[Message] | list[dict]:
         """Return all messages in a conversation owned by the current user."""
 
         conversation = self.conversation_repository.get_by_public_id_and_user_id(
@@ -100,7 +107,18 @@ class MessageService:
         if conversation is None:
             raise AppException(404, "CONVERSATION_NOT_FOUND", "未找到对应会话。")
 
-        return self.message_repository.list_by_conversation_id(conversation.id)
+        cache_key = self._message_list_key(conversation_public_id)
+        cached_items = self.cache.get_json(cache_key)
+        if isinstance(cached_items, list):
+            return cached_items
+
+        messages = self.message_repository.list_by_conversation_id(conversation.id)
+        self.cache.set_json(
+            cache_key,
+            [MessageItem.model_validate(item).model_dump(mode="json") for item in messages],
+            self.settings.message_cache_ttl_seconds,
+        )
+        return messages
 
     def _bind_attachments(
         self,
@@ -173,3 +191,12 @@ class MessageService:
             seen.add(candidate)
 
         return normalized_ids
+
+    def _invalidate_message_related_cache(self, *, user_id: int, conversation_public_id: str) -> None:
+        self.cache.delete(
+            self._message_list_key(conversation_public_id),
+            self.cache.build_key("conversations", "user", user_id),
+        )
+
+    def _message_list_key(self, conversation_public_id: str) -> str:
+        return self.cache.build_key("messages", "conversation", conversation_public_id)

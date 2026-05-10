@@ -11,6 +11,7 @@ type LoginFormProps = {
   loginMethod: LoginMethod;
   codeCooldown: number;
   isSendingCode: boolean;
+  codeMessage: string | null;
   onFieldChange: (field: keyof LoginFormState, value: string | boolean) => void;
   onLoginMethodChange: (method: LoginMethod) => void;
   onForgotPassword: () => void;
@@ -23,6 +24,7 @@ export function LoginForm({
   loginMethod,
   codeCooldown,
   isSendingCode,
+  codeMessage,
   onFieldChange,
   onLoginMethodChange,
   onForgotPassword,
@@ -70,6 +72,7 @@ export function LoginForm({
                 {sendCodeText}
               </button>
             </div>
+            {codeMessage && <span className="field-hint">{codeMessage}</span>}
           </label>
 
           <button

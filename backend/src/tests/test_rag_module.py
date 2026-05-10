@@ -8,9 +8,10 @@ from unittest.mock import patch
 
 from src.core.config import get_settings
 from src.core.device import resolve_compute_device
+from src.core.exceptions import AppException
 from src.rag.chunker import TextChunker
 from src.rag.embedding_client import EmbeddingClient
-from src.rag.milvus_repository import MilvusChunkRecord
+from src.rag.milvus_repository import MilvusChunkRecord, MilvusRagRepository
 from src.rag.retriever import RagRetriever
 from src.rag.rerank_client import RerankClient, RerankResult
 
@@ -94,6 +95,29 @@ class RagModuleTests(unittest.TestCase):
 
         self.assertTrue(settings.rag_embedding_model_path.endswith("models\\test-embedding"))
         self.assertTrue(settings.rag_rerank_model_path.endswith("models\\test-reranker"))
+
+    def test_milvus_connection_failure_uses_stable_app_error(self) -> None:
+        class _FailingMilvusClient:
+            def __init__(self, **kwargs):
+                raise TimeoutError("connection timed out")
+
+        fake_module = types.SimpleNamespace(MilvusClient=_FailingMilvusClient)
+        settings = SimpleNamespace(
+            milvus_uri="http://127.0.0.1:19530",
+            milvus_token="",
+            milvus_database="default",
+            rag_request_timeout_seconds=1,
+        )
+
+        with patch.dict(sys.modules, {"pymilvus": fake_module}):
+            repository = MilvusRagRepository(settings)
+
+            with self.assertRaises(AppException) as raised:
+                repository.search([0.1, 0.2], ["kb_1"], top_k=3, min_score=0.2)
+
+        self.assertEqual(raised.exception.code, "RAG_MILVUS_UNAVAILABLE")
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertIn("127.0.0.1:19530", raised.exception.message)
 
     def test_resolve_compute_device_returns_cuda_when_torch_reports_cuda(self) -> None:
         fake_torch = types.SimpleNamespace(

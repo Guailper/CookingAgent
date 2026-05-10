@@ -62,6 +62,8 @@ export function useAuth({ onAuthenticated }: UseAuthOptions = {}) {
   const [registerCodeCooldown, setRegisterCodeCooldown] = useState(0);
   const [isSendingLoginCode, setIsSendingLoginCode] = useState(false);
   const [isSendingRegisterCode, setIsSendingRegisterCode] = useState(false);
+  const [loginCodeMessage, setLoginCodeMessage] = useState<string | null>(null);
+  const [registerCodeMessage, setRegisterCodeMessage] = useState<string | null>(null);
 
   const [loginForm, setLoginForm] = useState<LoginFormState>(() => {
     const remembered = getRememberedCredentials();
@@ -104,6 +106,10 @@ export function useAuth({ onAuthenticated }: UseAuthOptions = {}) {
   }, [registerCodeCooldown]);
 
   function updateLoginForm(field: keyof LoginFormState, value: string | boolean) {
+    if (field === "email" || field === "emailCode") {
+      setLoginCodeMessage(null);
+    }
+
     setLoginForm((currentState) => ({
       ...currentState,
       [field]: value,
@@ -111,6 +117,10 @@ export function useAuth({ onAuthenticated }: UseAuthOptions = {}) {
   }
 
   function updateRegisterForm(field: keyof RegisterFormState, value: string) {
+    if (field === "email" || field === "emailCode") {
+      setRegisterCodeMessage(null);
+    }
+
     setRegisterForm((currentState) => ({
       ...currentState,
       [field]: value,
@@ -146,20 +156,24 @@ export function useAuth({ onAuthenticated }: UseAuthOptions = {}) {
     setMode("login");
     setLoginMethod("emailCode");
     setNotice(null);
+    setLoginCodeMessage(null);
   }
 
   async function handleSendLoginEmailCode() {
     try {
       setIsSendingLoginCode(true);
-      await sendEmailCode(loginForm.email, "login");
       setLoginCodeCooldown(CODE_COOLDOWN_SECONDS);
-      setNotice({
-        tone: "success",
-        title: "验证码已发送",
-        description: "请查看邮箱并在有效期内完成登录。",
-      });
+      setLoginCodeMessage("验证码发送中，请稍候。");
+      await sendEmailCode(loginForm.email, "login");
+      setLoginCodeMessage("验证码已发送，请查看邮箱。");
     } catch (error) {
-      setNotice(createNoticeFromError(error));
+      if (error instanceof AuthServiceError && error.code === "EMAIL_CODE_TOO_FREQUENT") {
+        setLoginCodeMessage(`发送过于频繁，请 ${loginCodeCooldown || CODE_COOLDOWN_SECONDS} 秒后再试。`);
+      } else {
+        setLoginCodeCooldown(0);
+        setLoginCodeMessage(null);
+        setNotice(createNoticeFromError(error));
+      }
     } finally {
       setIsSendingLoginCode(false);
     }
@@ -168,15 +182,18 @@ export function useAuth({ onAuthenticated }: UseAuthOptions = {}) {
   async function handleSendRegisterEmailCode() {
     try {
       setIsSendingRegisterCode(true);
-      await sendEmailCode(registerForm.email, "register");
       setRegisterCodeCooldown(CODE_COOLDOWN_SECONDS);
-      setNotice({
-        tone: "success",
-        title: "验证码已发送",
-        description: "请查看邮箱并在有效期内完成注册。",
-      });
+      setRegisterCodeMessage("验证码发送中，请稍候。");
+      await sendEmailCode(registerForm.email, "register");
+      setRegisterCodeMessage("验证码已发送，请查看邮箱。");
     } catch (error) {
-      setNotice(createNoticeFromError(error));
+      if (error instanceof AuthServiceError && error.code === "EMAIL_CODE_TOO_FREQUENT") {
+        setRegisterCodeMessage(`发送过于频繁，请 ${registerCodeCooldown || CODE_COOLDOWN_SECONDS} 秒后再试。`);
+      } else {
+        setRegisterCodeCooldown(0);
+        setRegisterCodeMessage(null);
+        setNotice(createNoticeFromError(error));
+      }
     } finally {
       setIsSendingRegisterCode(false);
     }
@@ -245,6 +262,8 @@ export function useAuth({ onAuthenticated }: UseAuthOptions = {}) {
     registerCodeCooldown,
     isSendingLoginCode,
     isSendingRegisterCode,
+    loginCodeMessage,
+    registerCodeMessage,
     updateLoginForm,
     updateRegisterForm,
     switchMode,

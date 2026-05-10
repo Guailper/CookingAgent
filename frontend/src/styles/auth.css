@@ -182,6 +182,14 @@
   color: var(--muted-strong);
 }
 
+.field-hint {
+  display: block;
+  margin-top: 2px;
+  color: #7d8da3;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
 .field-row {
   display: flex;
   align-items: center;

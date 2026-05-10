@@ -7,6 +7,7 @@ type RegisterFormProps = {
   form: RegisterFormState;
   codeCooldown: number;
   isSendingCode: boolean;
+  codeMessage: string | null;
   onFieldChange: (field: keyof RegisterFormState, value: string) => void;
   onSendEmailCode: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -16,6 +17,7 @@ export function RegisterForm({
   form,
   codeCooldown,
   isSendingCode,
+  codeMessage,
   onFieldChange,
   onSendEmailCode,
   onSubmit,
@@ -70,6 +72,7 @@ export function RegisterForm({
             {sendCodeText}
           </button>
         </div>
+        {codeMessage && <span className="field-hint">{codeMessage}</span>}
       </label>
 
       <label className="field-group">
