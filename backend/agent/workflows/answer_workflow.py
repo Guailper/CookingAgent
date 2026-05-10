@@ -2,9 +2,16 @@
 
 from dataclasses import replace
 
-from agent.contracts import ActionIntent, AgentTurnContext, AgentTurnResult, RagContext
+from agent.contracts import (
+    ActionIntent,
+    AgentTurnContext,
+    AgentTurnResult,
+    RagContext,
+    WebSearchContext,
+)
 from agent.rag.context_builder import RagContextBuilder, rag_context_to_snapshot
 from agent.runner import LangChainAgentRunner
+from agent.web.context_builder import WebSearchContextBuilder, web_search_context_to_snapshot
 from src.core.config import Settings, get_settings
 
 
@@ -18,22 +25,32 @@ class AnswerWorkflow:
         runner: LangChainAgentRunner | None = None,
         settings: Settings | None = None,
         rag_context_builder: RagContextBuilder | None = None,
+        web_search_context_builder: WebSearchContextBuilder | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self.runner = runner or LangChainAgentRunner(self.settings)
         self.rag_context_builder = rag_context_builder or RagContextBuilder(self.settings)
+        self.web_search_context_builder = (
+            web_search_context_builder or WebSearchContextBuilder(self.settings)
+        )
 
     def run(self, context: AgentTurnContext, intent: ActionIntent) -> AgentTurnResult:
         rag_context = self.rag_context_builder.build(context)
-        enriched_context = replace(context, rag_context=rag_context)
+        web_search_context = self.web_search_context_builder.build(context, rag_context)
+        enriched_context = replace(
+            context,
+            rag_context=rag_context,
+            web_search_context=web_search_context,
+        )
         result = self.runner.run(enriched_context)
-        return self._with_workflow_metadata(result, intent, rag_context)
+        return self._with_workflow_metadata(result, intent, rag_context, web_search_context)
 
     def _with_workflow_metadata(
         self,
         result: AgentTurnResult,
         intent: ActionIntent,
         rag_context: RagContext,
+        web_search_context: WebSearchContext,
     ) -> AgentTurnResult:
         output_snapshot = dict(result.output_snapshot or {})
         output_snapshot["workflow_name"] = self.name
@@ -44,6 +61,7 @@ class AnswerWorkflow:
             "reason": intent.reason,
         }
         output_snapshot["rag"] = rag_context_to_snapshot(rag_context)
+        output_snapshot["web_search"] = web_search_context_to_snapshot(web_search_context)
 
         return AgentTurnResult(
             reply_text=result.reply_text,

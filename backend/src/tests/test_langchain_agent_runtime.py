@@ -12,6 +12,8 @@ from agent.contracts import (
     RagContext,
     RetrievalDecision,
     RetrievedChunk,
+    WebSearchContext,
+    WebSearchResult,
 )
 from agent.factories.model_factory import _resolve_temperature, _should_disable_reasoning
 from agent.fallback import build_fallback_result
@@ -127,6 +129,40 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
 
         self.assertIn("规则判断不需要检索", prompt)
         self.assertIn("不要声称已经检索过知识库", prompt)
+
+    def test_system_prompt_includes_web_sources_after_rag_miss(self) -> None:
+        context = self._context(text="空气炸锅烤红薯温度")
+        context = AgentTurnContext(
+            **{
+                **context.__dict__,
+                "rag_context": RagContext(
+                    enabled=True,
+                    status="miss",
+                    query=context.user_message_text,
+                    knowledge_base_public_ids=["cookbook"],
+                ),
+                "web_search_context": WebSearchContext(
+                    enabled=True,
+                    status="hit",
+                    query=context.user_message_text,
+                    results=[
+                        WebSearchResult(
+                            title="空气炸锅烤红薯做法",
+                            link="https://example.com/sweet-potato",
+                            snippet="建议 180 到 200 度烘烤。",
+                        )
+                    ],
+                ),
+            }
+        )
+
+        prompt = build_system_prompt(context)
+
+        self.assertIn("知识库未检索到相关信息", prompt)
+        self.assertIn("联网搜索结果", prompt)
+        self.assertIn("空气炸锅烤红薯做法", prompt)
+        self.assertIn("https://example.com/sweet-potato", prompt)
+        self.assertIn("不要编造来源或链接", prompt)
 
     def test_rag_search_tool_returns_retrieved_chunks(self) -> None:
         with patch("agent.tools.rag_search.RagRetriever") as retriever_cls:
@@ -366,7 +402,78 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
         self.assertEqual(result.intent_type, "answer")
         self.assertEqual(result.workflow_name, "answer_workflow")
         self.assertEqual(result.output_snapshot["rag"]["status"], "skipped")
+        self.assertEqual(result.output_snapshot["web_search"]["status"], "skipped")
         self.assertFalse(result.output_snapshot["rag"]["decision"]["should_retrieve"])
+
+    def test_answer_workflow_adds_web_search_context_when_rag_misses(self) -> None:
+        class _FakeRunner:
+            def __init__(self, settings) -> None:
+                self.settings = settings
+                self.context = None
+
+            def run(self, context):
+                self.context = context
+                return build_agent_result(
+                    response={
+                        "messages": [
+                            SimpleNamespace(type="ai", content="可以参考网页结果回答。"),
+                        ]
+                    },
+                    model_name="glm-4.7-flash-free",
+                    provider="openai_compatible",
+                )
+
+        fake_runner = _FakeRunner(self._settings())
+        fake_rag_builder = SimpleNamespace(
+            build=lambda context: RagContext(
+                enabled=True,
+                status="miss",
+                query=context.user_message_text,
+                knowledge_base_public_ids=["cookbook"],
+                decision=RetrievalDecision(
+                    should_retrieve=True,
+                    source="rule",
+                    reason="domain question",
+                ),
+            )
+        )
+        fake_web_builder = SimpleNamespace(
+            build=lambda context, rag_context: WebSearchContext(
+                enabled=True,
+                status="hit",
+                query=context.user_message_text,
+                results=[
+                    WebSearchResult(
+                        title="空气炸锅烤红薯做法",
+                        link="https://example.com/sweet-potato",
+                        snippet="180 到 200 度烘烤。",
+                    )
+                ],
+            )
+        )
+
+        result = AnswerWorkflow(
+            runner=fake_runner,
+            settings=self._settings(),
+            rag_context_builder=fake_rag_builder,
+            web_search_context_builder=fake_web_builder,
+        ).run(
+            self._context(text="空气炸锅烤红薯温度"),
+            SimpleNamespace(
+                intent_type="answer",
+                confidence=1.0,
+                source="default",
+                reason="default",
+            ),
+        )
+
+        self.assertEqual(fake_runner.context.web_search_context.status, "hit")
+        self.assertEqual(result.output_snapshot["rag"]["status"], "miss")
+        self.assertEqual(result.output_snapshot["web_search"]["status"], "hit")
+        self.assertEqual(
+            result.output_snapshot["web_search"]["results"][0]["link"],
+            "https://example.com/sweet-potato",
+        )
 
     def test_output_normalizer_extracts_final_ai_message_and_metadata(self) -> None:
         messages = [

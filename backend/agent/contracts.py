@@ -26,6 +26,7 @@ class AgentTurnContext:
     request_options: dict[str, Any] = field(default_factory=dict)
     attachment_context: list[dict[str, Any]] = field(default_factory=list)
     rag_context: "RagContext | None" = None
+    web_search_context: "WebSearchContext | None" = None
 
 
 @dataclass(frozen=True)
@@ -82,3 +83,24 @@ class RetrievedChunk:
     page_no: int | None = None
     score: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class WebSearchContext:
+    """Structured web search result used when the knowledge base has no answer."""
+
+    enabled: bool
+    status: str
+    query: str
+    results: list["WebSearchResult"] = field(default_factory=list)
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+@dataclass(frozen=True)
+class WebSearchResult:
+    """One cited public web search result."""
+
+    title: str
+    link: str
+    snippet: str = ""
