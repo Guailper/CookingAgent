@@ -32,16 +32,22 @@ env/
 ENV/
 backend/.venv/
 
+
 # Backend runtime files
 backend/uploads/
 backend/logs/
+backend/.*
 *.log
+backend/*.md
+!backend/mysql_schema.md
+backend/*.sql
 
 # IDE / OS
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
+.codex/
 
 # md
 *.md
