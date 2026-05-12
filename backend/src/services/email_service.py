@@ -27,7 +27,7 @@ class EmailService:
                 "邮件发送服务尚未配置，请先配置 QQ 邮箱 SMTP 信息。",
             )
 
-        subject = "智能做菜助手验证码"
+        subject = "轻灵厨房验证码"
         purpose_text = "注册账号" if purpose == "register" else "邮箱验证码登录"
         message = EmailMessage()
         message["Subject"] = subject
@@ -36,7 +36,7 @@ class EmailService:
         message.set_content(
             "\n".join(
                 [
-                    f"你正在进行{purpose_text}操作。",
+                    f"你正在进行轻灵厨房{purpose_text}操作。",
                     f"验证码：{code}",
                     f"验证码 {expires_minutes} 分钟内有效，请勿转发给他人。",
                     "",

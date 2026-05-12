@@ -22,11 +22,12 @@ from src.core.constants import (
     DEFAULT_VOICE_REQUEST_TIMEOUT_SECONDS,
 )
 
-load_dotenv()
-
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 PROJECT_ROOT = BACKEND_ROOT.parent
 DEFAULT_UPLOAD_DIR = BACKEND_ROOT / "uploads"
+
+load_dotenv(PROJECT_ROOT / ".env")
+load_dotenv(BACKEND_ROOT / ".env", override=True)
 
 
 def _get_bool_env(name: str, default: bool = False) -> bool:
@@ -399,6 +400,9 @@ class Settings:
     agent_model_name: str
     agent_request_timeout_seconds: int
     agent_max_context_messages: int
+    agent_summary_trigger_messages: int
+    agent_summary_batch_messages: int
+    agent_summary_max_chars: int
     agent_temperature: float
     agent_max_output_tokens: int
     agent_disable_reasoning: bool
@@ -557,6 +561,9 @@ def get_settings() -> Settings:
         agent_model_name=agent_model_name.strip(),
         agent_request_timeout_seconds=_get_int_env("AGENT_REQUEST_TIMEOUT_SECONDS", 90),
         agent_max_context_messages=_get_int_env("AGENT_MAX_CONTEXT_MESSAGES", 10),
+        agent_summary_trigger_messages=_get_int_env("AGENT_SUMMARY_TRIGGER_MESSAGES", 12),
+        agent_summary_batch_messages=_get_int_env("AGENT_SUMMARY_BATCH_MESSAGES", 8),
+        agent_summary_max_chars=_get_int_env("AGENT_SUMMARY_MAX_CHARS", 1200),
         agent_temperature=_get_float_env("AGENT_TEMPERATURE", 0.4),
         agent_max_output_tokens=_get_int_env("AGENT_MAX_OUTPUT_TOKENS", 800),
         agent_disable_reasoning=_get_bool_env(
@@ -575,11 +582,11 @@ def get_settings() -> Settings:
         ).strip(),
         weather_api_base_url=os.getenv(
             "WEATHER_API_BASE_URL",
-            "https://devapi.qweather.com",
+            "https://devapi.qweather.com/v7/weather",
         ).strip(),
         weather_geo_base_url=os.getenv(
             "WEATHER_GEO_BASE_URL",
-            "https://geoapi.qweather.com",
+            "https://geoapi.qweather.com/geo/v2/city/lookup",
         ).strip(),
         weather_request_timeout_seconds=_get_int_env("WEATHER_REQUEST_TIMEOUT_SECONDS", 10),
         serpapi_api_key=(

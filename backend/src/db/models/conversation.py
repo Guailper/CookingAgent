@@ -12,6 +12,7 @@ from src.db.base import Base
 if TYPE_CHECKING:
     from .agent_run import AgentRun
     from .attachment import Attachment
+    from .conversation_summary import ConversationSummary
     from .message import Message
     from .user import User
 
@@ -111,6 +112,12 @@ class Conversation(Base):
         back_populates="conversation",
         passive_deletes=True,
         order_by="AgentRun.created_at",
+    )
+    summary: Mapped["ConversationSummary | None"] = relationship(
+        "ConversationSummary",
+        back_populates="conversation",
+        passive_deletes=True,
+        uselist=False,
     )
 
     def __repr__(self) -> str:

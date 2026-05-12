@@ -15,7 +15,11 @@ from agent.contracts import (
     WebSearchContext,
     WebSearchResult,
 )
-from agent.factories.model_factory import _resolve_temperature, _should_disable_reasoning
+from agent.factories.model_factory import (
+    _resolve_temperature,
+    _should_disable_reasoning,
+    build_chat_model,
+)
 from agent.fallback import build_fallback_result
 from agent.output.normalizer import build_agent_result
 from agent.prompts.system_prompts import build_system_prompt
@@ -105,6 +109,21 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
         self.assertIn("后端已经默认检索知识库", prompt)
         self.assertIn("蛋炒饭适合使用隔夜米饭", prompt)
         self.assertNotIn("必须先调用 rag_search", prompt)
+
+    def test_system_prompt_includes_conversation_summary(self) -> None:
+        context = self._context()
+        context = AgentTurnContext(
+            **{
+                **context.__dict__,
+                "conversation_summary": "当前目标：做一份快手晚餐。\n已确认约束：不吃香菜。",
+            }
+        )
+
+        prompt = build_system_prompt(context)
+
+        self.assertIn("历史会话摘要", prompt)
+        self.assertIn("不吃香菜", prompt)
+        self.assertIn("本轮用户输入为准", prompt)
 
     def test_system_prompt_explains_skipped_rag_context(self) -> None:
         context = self._context(text="谢谢")
@@ -202,6 +221,8 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
         self.assertIn("WEATHER_API_KEY", result)
 
     def test_weather_tool_returns_current_weather(self) -> None:
+        requested_urls = []
+
         class _FakeResponse:
             def __init__(self, payload):
                 self.payload = payload
@@ -223,6 +244,7 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
                 return None
 
             def get(self, url, params):
+                requested_urls.append(url)
                 if "city/lookup" in url:
                     return _FakeResponse(
                         {"code": "200", "location": [{"id": "101010100", "name": "北京"}]}
@@ -246,6 +268,59 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
 
         self.assertIn("北京当前天气：晴", result)
         self.assertIn("气温 26°C", result)
+        self.assertEqual("https://geoapi.qweather.com/geo/v2/city/lookup", requested_urls[0])
+        self.assertEqual("https://devapi.qweather.com/v7/weather/now", requested_urls[1])
+
+    def test_weather_tool_normalizes_legacy_geo_endpoint(self) -> None:
+        requested_urls = []
+
+        class _FakeResponse:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return self.payload
+
+        class _FakeClient:
+            def __init__(self, timeout):
+                self.timeout = timeout
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return None
+
+            def get(self, url, params):
+                requested_urls.append(url)
+                if "city/lookup" in url:
+                    return _FakeResponse(
+                        {"code": "200", "location": [{"id": "101010100", "name": "北京"}]}
+                    )
+                return _FakeResponse({"code": "200", "now": {"text": "晴", "temp": "26"}})
+
+        settings = self._settings(
+            weather_api_key="weather-key",
+            weather_api_base_url="https://k76x87f4f5.re.qweatherapi.com/v7/weather/",
+            weather_geo_base_url="https://k76x87f4f5.re.qweatherapi.com/v2/city/lookup",
+        )
+
+        with patch("agent.tools.weather.httpx.Client", _FakeClient):
+            tool = build_weather_tool(settings)
+            result = tool("北京", "now")
+
+        self.assertIn("北京当前天气：晴", result)
+        self.assertEqual(
+            "https://k76x87f4f5.re.qweatherapi.com/geo/v2/city/lookup",
+            requested_urls[0],
+        )
+        self.assertEqual(
+            "https://k76x87f4f5.re.qweatherapi.com/v7/weather/now",
+            requested_urls[1],
+        )
 
     def test_web_search_tool_reports_missing_api_key(self) -> None:
         tool = build_web_search_tool(self._settings(serpapi_api_key=""))
@@ -648,6 +723,74 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
             "succeeded",
         )
 
+    def test_runner_tries_next_model_candidate_after_empty_response(self) -> None:
+        fake_agents_module = types.ModuleType("langchain.agents")
+        fake_langchain_module = types.ModuleType("langchain")
+
+        class _FakeCompiledAgent:
+            def __init__(self, model):
+                self.model = model
+
+            def invoke(self, payload):
+                _ = payload
+                if self.model == "primary-model":
+                    return {"messages": [SimpleNamespace(type="ai", content="")]}
+                return {
+                    "messages": [
+                        SimpleNamespace(type="ai", content="备用模型回答。"),
+                    ]
+                }
+
+        def create_agent(*, model, tools, system_prompt):
+            _ = tools
+            _ = system_prompt
+            return _FakeCompiledAgent(model)
+
+        fake_agents_module.create_agent = create_agent
+        fake_langchain_module.agents = fake_agents_module
+        settings = self._settings(
+            agent_model_candidates=[
+                AgentModelCandidate(
+                    provider="kimi",
+                    base_url="https://primary.example/v1",
+                    api_key="primary-key",
+                    model_name="kimi-k2.6",
+                ),
+                AgentModelCandidate(
+                    provider="aihubmix",
+                    base_url="https://backup.example/v1",
+                    api_key="backup-key",
+                    model_name="glm-4.7-flash-free",
+                ),
+            ]
+        )
+
+        with patch.dict(
+            sys.modules,
+            {
+                "langchain": fake_langchain_module,
+                "langchain.agents": fake_agents_module,
+            },
+        ), patch(
+            "agent.runner.build_chat_model",
+            side_effect=["primary-model", "backup-model"],
+        ), patch(
+            "agent.runner.build_tools",
+            return_value=["fake-tool"],
+        ), patch(
+            "agent.runner.build_langchain_messages",
+            return_value=["fake-message"],
+        ):
+            result = LangChainAgentRunner(settings=settings).run(self._context())
+
+        self.assertEqual(result.reply_text, "备用模型回答。")
+        self.assertEqual(result.model_name, "glm-4.7-flash-free")
+        self.assertTrue(result.output_snapshot["model_fallback"]["used_fallback"])
+        self.assertEqual(
+            result.output_snapshot["model_fallback"]["attempts"][0]["error_code"],
+            "AGENT_EMPTY_RESPONSE",
+        )
+
     def test_kimi_provider_disables_thinking_for_tool_call_compatibility(self) -> None:
         settings = self._settings(
             agent_model_provider="kimi",
@@ -657,14 +800,50 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
 
         self.assertTrue(_should_disable_reasoning(settings, "kimi"))
 
-    def test_kimi_provider_forces_supported_temperature(self) -> None:
+    def test_kimi_provider_forces_supported_temperature_when_thinking_enabled(self) -> None:
         settings = self._settings(
             agent_model_provider="kimi",
-            agent_model_name="kimi-k2.6",
+            agent_model_name="kimi-k2.5",
             agent_temperature=0.4,
+            agent_disable_reasoning=False,
         )
 
         self.assertEqual(_resolve_temperature(settings, "kimi"), 1.0)
+
+    def test_kimi_provider_forces_supported_temperature_when_thinking_disabled(self) -> None:
+        settings = self._settings(
+            agent_model_provider="kimi",
+            agent_model_name="kimi-k2.5",
+            agent_temperature=1.0,
+            agent_disable_reasoning=True,
+        )
+
+        self.assertEqual(_resolve_temperature(settings, "kimi"), 0.6)
+
+    def test_kimi_chat_model_sends_thinking_in_extra_body(self) -> None:
+        captured_kwargs = {}
+
+        class _FakeChatOpenAI:
+            def __init__(self, **kwargs):
+                captured_kwargs.update(kwargs)
+
+        fake_langchain_openai = types.SimpleNamespace(ChatOpenAI=_FakeChatOpenAI)
+        settings = self._settings(
+            agent_model_provider="kimi",
+            agent_model_base_url="https://api.moonshot.cn/v1",
+            agent_model_api_key="kimi-key",
+            agent_model_name="kimi-k2.5",
+            agent_temperature=1.0,
+            agent_disable_reasoning=True,
+        )
+
+        with patch.dict(sys.modules, {"langchain_openai": fake_langchain_openai}):
+            build_chat_model(settings)
+
+        self.assertEqual(captured_kwargs["model"], "kimi-k2.5")
+        self.assertEqual(captured_kwargs["temperature"], 0.6)
+        self.assertEqual(captured_kwargs["extra_body"], {"thinking": {"type": "disabled"}})
+        self.assertNotIn("model_kwargs", captured_kwargs)
 
     def test_settings_prefers_kimi_specific_model_config(self) -> None:
         env = {
@@ -674,7 +853,7 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
             "AGENT_MODEL_NAME": "generic-model",
             "KIMI_BASE_URL": "https://api.moonshot.cn/v1",
             "KIMI_API_KEY": "kimi-key",
-            "KIMI_MODEL_ID": "kimi-k2.6",
+            "KIMI_MODEL_ID": "kimi-k2.5",
         }
 
         with patch.dict("os.environ", env, clear=False):
@@ -685,7 +864,7 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
         self.assertEqual(settings.agent_model_provider, "kimi")
         self.assertEqual(settings.agent_model_base_url, "https://api.moonshot.cn/v1")
         self.assertEqual(settings.agent_model_api_key, "kimi-key")
-        self.assertEqual(settings.agent_model_name, "kimi-k2.6")
+        self.assertEqual(settings.agent_model_name, "kimi-k2.5")
 
     def test_settings_builds_agent_model_fallback_candidates_in_configured_order(self) -> None:
         env = {

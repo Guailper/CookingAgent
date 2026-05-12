@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 import re
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -13,6 +14,7 @@ logger = get_logger(__name__)
 
 _DAY_OFFSET_RE = re.compile(r"^(?P<offset>[+-]?\d+)d$")
 _MAX_FORECAST_DAYS = 7
+
 
 
 def build_weather_tool(settings: Settings | None = None):
@@ -42,6 +44,7 @@ def build_weather_tool(settings: Settings | None = None):
         try:
             with httpx.Client(timeout=tool_settings.weather_request_timeout_seconds) as client:
                 location_id, resolved_name = _lookup_location_id(client, tool_settings, city_name)
+                print(f"Resolved location '{city_name}' to id '{location_id}' with name '{resolved_name}'.")
                 weather_data = _fetch_weather(client, tool_settings, location_id, date_offset)
                 return _render_weather(resolved_name or city_name, date_offset, weather_data)
         except httpx.HTTPError as exc:
@@ -73,7 +76,7 @@ def _lookup_location_id(
     city_name: str,
 ) -> tuple[str, str]:
     response = client.get(
-        f"{settings.weather_geo_base_url.rstrip('/')}/v2/city/lookup",
+        settings.weather_geo_base_url,
         params={
             "location": city_name,
             "key": settings.weather_api_key,
@@ -97,7 +100,7 @@ def _fetch_weather(
 ) -> dict[str, Any]:
     endpoint = "now" if date_offset == 0 else "7d"
     response = client.get(
-        f"{settings.weather_api_base_url.rstrip('/')}/v7/weather/{endpoint}",
+        settings.weather_api_base_url + endpoint,
         params={
             "location": location_id,
             "key": settings.weather_api_key,

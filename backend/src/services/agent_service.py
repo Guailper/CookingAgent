@@ -30,6 +30,7 @@ from src.db.models.user import User
 from src.repositories.agent_run_repository import AgentRunRepository
 from src.repositories.conversation_repository import ConversationRepository
 from src.repositories.message_repository import MessageRepository
+from src.services.conversation_summary_service import ConversationSummaryService
 from src.services.message_service import MessageService
 
 logger = get_logger(__name__)
@@ -51,6 +52,10 @@ class AgentService:
         self.agent_runner = LangChainAgentRunner()
         self.cache = CacheService(self.agent_runner.settings)
         self.agent_orchestrator = AgentOrchestrator(db, runner=self.agent_runner)
+        self.conversation_summary_service = ConversationSummaryService(
+            db,
+            settings=self.agent_runner.settings,
+        )
 
     def chat(
         self,
@@ -80,10 +85,14 @@ class AgentService:
             extra_metadata=extra_metadata,
         )
         recent_messages = self.message_repository.list_recent_by_conversation_id(conversation.id)
+        conversation_summary = self.conversation_summary_service.get_summary_text(
+            conversation.id
+        )
         context = self._build_turn_context(
             conversation_public_id=conversation.public_id,
             user_public_id=user.public_id,
             user_message=user_message,
+            conversation_summary=conversation_summary,
             recent_messages=recent_messages,
             attachment_public_ids=attachment_public_ids,
             knowledge_base_public_ids=self._resolve_knowledge_base_ids(
@@ -157,6 +166,7 @@ class AgentService:
             agent_run=agent_run,
             result=result,
         )
+        self._try_update_conversation_summary(conversation_id=conversation.id)
         self._try_update_memory_after_answer(context=context, result=result)
         refreshed_agent_run = self.agent_run_repository.get_by_id(agent_run.id)
         if refreshed_agent_run is None:
@@ -202,6 +212,18 @@ class AgentService:
             self.db.rollback()
             logger.warning("Memory side-effect update failed.", exc_info=exc)
 
+    def _try_update_conversation_summary(self, *, conversation_id: int) -> None:
+        """Update rolling summary as a non-critical side effect after a successful answer."""
+
+        try:
+            conversation = self.conversation_repository.get_by_id(conversation_id)
+            if conversation is None:
+                return
+            self.conversation_summary_service.update_after_answer(conversation)
+        except Exception as exc:
+            self.db.rollback()
+            logger.warning("Conversation summary side-effect update failed.", exc_info=exc)
+
     def _resolve_knowledge_base_ids(
         self,
         knowledge_base_public_ids: list[str] | None,
@@ -229,6 +251,7 @@ class AgentService:
         conversation_public_id: str,
         user_public_id: str,
         user_message: Message,
+        conversation_summary: str | None,
         recent_messages: list[Message],
         attachment_public_ids: list[str] | None,
         knowledge_base_public_ids: list[str] | None,
@@ -241,6 +264,7 @@ class AgentService:
             user_public_id=user_public_id,
             trigger_message_public_id=user_message.public_id,
             user_message_text=user_message.content,
+            conversation_summary=conversation_summary,
             recent_messages=[
                 AgentContextMessage(role=message.role, content=message.content)
                 for message in recent_messages
@@ -463,6 +487,7 @@ class AgentService:
             "attachment_public_ids": context.attachment_public_ids,
             "knowledge_base_public_ids": context.knowledge_base_public_ids,
             "request_options": context.request_options,
+            "conversation_summary": context.conversation_summary,
             "attachment_context_count": len(context.attachment_context),
             "recent_messages": [
                 {"role": message.role, "content": message.content}

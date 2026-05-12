@@ -20,6 +20,7 @@ class AgentTurnContext:
     user_public_id: str
     trigger_message_public_id: str
     user_message_text: str
+    conversation_summary: str | None = None
     recent_messages: list[AgentContextMessage] = field(default_factory=list)
     attachment_public_ids: list[str] = field(default_factory=list)
     knowledge_base_public_ids: list[str] = field(default_factory=list)

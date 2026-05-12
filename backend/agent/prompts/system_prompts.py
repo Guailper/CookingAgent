@@ -12,10 +12,25 @@ def build_system_prompt(context: AgentTurnContext) -> str:
             "你是 CookingAgent，一个面向做菜、食材、菜谱、营养和厨房流程的中文智能助手。",
             "回答要直接、清晰、可执行。涉及步骤时优先使用分点或编号。",
             "不要编造不存在的文件、知识库来源、联网搜索结果或网页链接。",
+            _build_conversation_summary_instruction(context),
             _build_rag_instruction(context.rag_context),
             _build_web_search_instruction(context.web_search_context),
             _build_attachment_instruction(context),
             "生成菜谱时要覆盖食材、调味、步骤、时间、火候和可替换方案。",
+        ]
+    )
+
+
+def _build_conversation_summary_instruction(context: AgentTurnContext) -> str:
+    summary = (context.conversation_summary or "").strip()
+    if not summary:
+        return "本轮没有可用的历史会话摘要。"
+
+    return "\n".join(
+        [
+            "历史会话摘要如下。它由模型基于更早的消息压缩生成，用于补充最近消息之外的上下文。",
+            "如果摘要和本轮用户明确表达冲突，请以本轮用户输入为准。",
+            summary,
         ]
     )
 

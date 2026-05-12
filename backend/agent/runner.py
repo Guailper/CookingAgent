@@ -78,6 +78,11 @@ class LangChainAgentRunner:
                     system_prompt=system_prompt,
                 )
                 response = agent.invoke({"messages": messages})
+                result = build_agent_result(
+                    response=response,
+                    model_name=candidate.model_name,
+                    provider=candidate.provider,
+                )
             except AppException as exc:
                 failed_attempts.append(self._build_failed_attempt(priority, candidate, exc))
                 logger.warning(
@@ -103,11 +108,6 @@ class LangChainAgentRunner:
                 )
                 continue
 
-            result = build_agent_result(
-                response=response,
-                model_name=candidate.model_name,
-                provider=candidate.provider,
-            )
             return self._with_model_fallback_metadata(
                 result=result,
                 candidate=candidate,

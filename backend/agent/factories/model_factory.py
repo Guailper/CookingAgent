@@ -33,11 +33,9 @@ def build_chat_model(
         )
 
     if provider not in {
-        "openai_compatible",
         "openai",
         "aihubmix",
         "kimi",
-        "moonshot",
         "xiaomi",
         "local",
     }:
@@ -63,11 +61,11 @@ def build_chat_model(
             "缺少 langchain-openai 依赖，请先安装 backend/requirements.txt。",
         ) from exc
 
-    model_kwargs: dict[str, Any] = {}
+    extra_body: dict[str, Any] = {}
     if _should_disable_reasoning(settings, provider, model_name):
-        # 部分兼容 OpenAI 的推理模型会把预算消耗在 reasoning_content。
-        # 这里延续旧实现的保护逻辑，确保最终回复进入普通 content 字段。
-        model_kwargs["thinking"] = {"type": "disabled"}
+        # Kimi K2.5 的 thinking 是 Moonshot 请求体字段；通过 extra_body 传递，
+        # 避免 LangChain/OpenAI SDK 把它当成未知标准参数处理。
+        extra_body["thinking"] = {"type": "disabled"}
 
     return ChatOpenAI(
         model=model_name,
@@ -80,7 +78,7 @@ def build_chat_model(
             else None
         ),
         timeout=settings.agent_request_timeout_seconds,
-        model_kwargs=model_kwargs,
+        extra_body=extra_body or None,
     )
 
 
@@ -96,8 +94,10 @@ def _resolve_temperature(
     避免运行时因为供应商参数约束进入 fallback。
     """
 
-    normalized_model_name = (model_name or settings.agent_model_name).strip().lower()
-    if provider in {"kimi", "moonshot"} or normalized_model_name.startswith("kimi-"):
+    normalized_model_name = _normalize_model_name(model_name or settings.agent_model_name)
+    if _is_kimi_model(provider, normalized_model_name):
+        if _should_disable_reasoning(settings, provider, normalized_model_name):
+            return 0.6
         return 1.0
 
     return settings.agent_temperature
@@ -118,11 +118,19 @@ def _should_disable_reasoning(
     if not settings.agent_disable_reasoning:
         return False
 
-    normalized_model_name = (model_name or settings.agent_model_name).strip().lower()
-    if provider in {"kimi", "moonshot"} or normalized_model_name.startswith("kimi-"):
+    normalized_model_name = _normalize_model_name(model_name or settings.agent_model_name)
+    if _is_kimi_model(provider, normalized_model_name):
         return True
 
     if provider in {"aihubmix"} and normalized_model_name.startswith("glm-"):
         return True
 
     return normalized_model_name.startswith("glm-")
+
+
+def _normalize_model_name(model_name: str | None) -> str:
+    return (model_name or "").strip().lower()
+
+
+def _is_kimi_model(provider: str, normalized_model_name: str) -> bool:
+    return provider in {"kimi", "moonshot"} or normalized_model_name.startswith("kimi-")

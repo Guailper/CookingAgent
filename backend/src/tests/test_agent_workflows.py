@@ -16,9 +16,12 @@ from agent.workflows.document_ingest_workflow import DocumentIngestWorkflow
 from agent.workflows.memory_update_workflow import MemoryUpdateWorkflow
 from src.db.models.attachment import Attachment
 from src.db.models.conversation import Conversation
+from src.db.models.conversation_summary import ConversationSummary
 from src.db.models.memory_item import MemoryItem
+from src.db.models.message import Message
 from src.db.models.parse_result import ParseResult
 from src.db.models.user import User
+from src.services.conversation_summary_service import ConversationSummaryService
 
 
 class AgentWorkflowTests(unittest.TestCase):
@@ -84,6 +87,21 @@ class AgentWorkflowTests(unittest.TestCase):
             )
             """,
             """
+            CREATE TABLE messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                public_id VARCHAR(64) NOT NULL UNIQUE,
+                conversation_id INTEGER NOT NULL,
+                user_id INTEGER,
+                role VARCHAR(32) NOT NULL,
+                message_type VARCHAR(32) NOT NULL DEFAULT 'text',
+                content TEXT NOT NULL DEFAULT '',
+                status VARCHAR(32) NOT NULL DEFAULT 'completed',
+                extra_metadata JSON,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL
+            )
+            """,
+            """
             CREATE TABLE parse_results (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 attachment_id INTEGER NOT NULL UNIQUE,
@@ -110,6 +128,19 @@ class AgentWorkflowTests(unittest.TestCase):
                 content TEXT NOT NULL,
                 confidence VARCHAR(16) NOT NULL DEFAULT '1.0',
                 extra_metadata JSON,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE conversation_summaries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL UNIQUE,
+                conversation_public_id VARCHAR(64) NOT NULL UNIQUE,
+                summary_text TEXT NOT NULL DEFAULT '',
+                covered_until_message_public_id VARCHAR(64),
+                source_message_count INTEGER NOT NULL DEFAULT 0,
+                model_name VARCHAR(100),
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL
             )
@@ -169,6 +200,35 @@ class AgentWorkflowTests(unittest.TestCase):
         db.add_all([user, conversation, attachment])
         db.commit()
         return attachment
+
+    def _create_conversation_with_messages(self, db, count: int = 4) -> Conversation:
+        user = User(
+            public_id="user_summary",
+            username="summary-tester",
+            email="summary@example.com",
+            password_hash="hash",
+        )
+        conversation = Conversation(
+            public_id="conv_summary",
+            user=user,
+            title="summary",
+        )
+        db.add_all([user, conversation])
+        db.flush()
+
+        for index in range(count):
+            db.add(
+                Message(
+                    public_id=f"msg_summary_{index}",
+                    conversation_id=conversation.id,
+                    user_id=user.id if index % 2 == 0 else None,
+                    role="user" if index % 2 == 0 else "assistant",
+                    content=f"summary message {index}",
+                )
+            )
+
+        db.commit()
+        return conversation
 
     def test_intent_resolver_routes_side_effect_workflows(self) -> None:
         resolver = ActionIntentResolver()
@@ -232,6 +292,47 @@ class AgentWorkflowTests(unittest.TestCase):
             self.assertIn("已记住 1 条偏好", result.reply_text)
             self.assertEqual(memory.memory_type, "diet_restriction")
             self.assertIn("不吃香菜", memory.content)
+        finally:
+            db.close()
+
+    def test_conversation_summary_service_updates_with_model(self) -> None:
+        db = self.SessionLocal()
+        conversation = self._create_conversation_with_messages(db, count=4)
+
+        class _FakeSummaryModel:
+            def invoke(self, messages):
+                return SimpleNamespace(content="当前目标：做一份快手晚餐。\n已确认约束：不吃香菜。")
+
+        settings = SimpleNamespace(
+            agent_model_name="summary-model",
+            agent_model_candidates=[],
+            agent_summary_trigger_messages=3,
+            agent_summary_batch_messages=2,
+            agent_summary_max_chars=500,
+            agent_model_provider="openai",
+            agent_model_base_url="https://example.com/v1",
+            agent_model_api_key="test-key",
+            agent_request_timeout_seconds=30,
+            agent_temperature=0.4,
+            agent_max_output_tokens=512,
+            agent_disable_reasoning=False,
+        )
+
+        try:
+            with patch(
+                "src.services.conversation_summary_service.build_chat_model",
+                return_value=_FakeSummaryModel(),
+            ):
+                summary = ConversationSummaryService(db, settings=settings).update_after_answer(
+                    conversation
+                )
+
+            saved_summary = db.query(ConversationSummary).one()
+            self.assertIsNotNone(summary)
+            self.assertIn("当前目标", saved_summary.summary_text)
+            self.assertEqual(saved_summary.covered_until_message_public_id, "msg_summary_3")
+            self.assertEqual(saved_summary.source_message_count, 4)
+            self.assertEqual(saved_summary.model_name, "summary-model")
         finally:
             db.close()
 

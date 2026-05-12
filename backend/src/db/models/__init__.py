@@ -7,6 +7,7 @@
 from src.db.models.agent_run import AgentRun
 from src.db.models.attachment import Attachment
 from src.db.models.conversation import Conversation
+from src.db.models.conversation_summary import ConversationSummary
 from src.db.models.email_verification_code import EmailVerificationCode
 from src.db.models.message import Message
 from src.db.models.memory_item import MemoryItem
@@ -17,6 +18,7 @@ __all__ = [
     "AgentRun",
     "Attachment",
     "Conversation",
+    "ConversationSummary",
     "EmailVerificationCode",
     "Message",
     "MemoryItem",
@@ -31,6 +33,7 @@ def import_all_models() -> None:
     _ = (
         User,
         Conversation,
+        ConversationSummary,
         Message,
         Attachment,
         ParseResult,

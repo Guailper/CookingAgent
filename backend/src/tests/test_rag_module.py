@@ -66,6 +66,9 @@ class RagModuleTests(unittest.TestCase):
             rag_vector_top_k=20,
             rag_final_top_k=2,
             rag_min_score=0.25,
+            rag_cache_ttl_seconds=0,
+            milvus_collection="rag_chunks",
+            redis_key_prefix="test",
         )
         retriever = RagRetriever(
             settings=settings,
