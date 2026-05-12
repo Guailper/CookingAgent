@@ -1,6 +1,6 @@
 # CookingAgent
 
-> 一个面向做菜场景的中文 AI Agent 全栈应用：把菜谱知识库、实时工具、多轮会话、附件和语音输入整合到同一个聊天工作台里。项目中使用的数据来源于 [HowToCook](https://github.com/Anduin2017/HowToCook))
+> 一个面向做菜场景的中文 AI Agent 全栈应用：把菜谱知识库、实时工具、多轮会话、附件和语音输入整合到同一个聊天工作台里。项目中使用的数据来源于 [程序员做饭指南](https://github.com/Anduin2017/HowToCook))
 
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=flat-square)
 ![React](https://img.shields.io/badge/React-18-61dafb?style=flat-square)
