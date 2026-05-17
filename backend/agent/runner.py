@@ -7,7 +7,12 @@ from agent.contracts import AgentTurnContext, AgentTurnResult
 from agent.factories.model_factory import build_chat_model
 from agent.factories.tool_factory import build_tools
 from agent.memory.message_history import build_langchain_messages
-from agent.output.normalizer import build_agent_result
+from agent.output.normalizer import (
+    build_agent_result,
+    build_streamed_agent_result,
+    count_stream_tool_calls,
+    extract_stream_delta,
+)
 from agent.prompts.system_prompts import build_system_prompt
 from src.core.config import AgentModelCandidate, Settings, get_settings
 from src.core.exceptions import AppException
@@ -39,7 +44,7 @@ class LangChainAgentRunner:
                 "Missing langchain dependency. Install backend/requirements.txt first.",
             ) from exc
 
-        tools = build_tools(context)
+        tools = build_tools(context, self.settings)
         messages = build_langchain_messages(
             context,
             max_history_messages=self.settings.agent_max_context_messages,
@@ -114,6 +119,124 @@ class LangChainAgentRunner:
                 priority=priority,
                 failed_attempts=failed_attempts,
             )
+
+        raise AppException(
+            502,
+            "AGENT_ALL_MODELS_FAILED",
+            "All configured agent model candidates failed.",
+            detail={"model_fallback_attempts": failed_attempts},
+        )
+
+    def stream(self, context: AgentTurnContext):
+        """Stream one LangChain agent turn and return the final normalized result."""
+
+        try:
+            from langchain.agents import create_agent
+        except ImportError as exc:
+            raise AppException(
+                500,
+                "AGENT_LANGCHAIN_NOT_INSTALLED",
+                "Missing langchain dependency. Install backend/requirements.txt first.",
+            ) from exc
+
+        tools = build_tools(context, self.settings)
+        messages = build_langchain_messages(
+            context,
+            max_history_messages=self.settings.agent_max_context_messages,
+        )
+        system_prompt = build_system_prompt(context)
+        model_candidates = self._resolve_model_candidates()
+        if not model_candidates:
+            raise AppException(
+                503,
+                "AGENT_MODEL_NOT_CONFIGURED",
+                "No configured agent model candidate is available.",
+            )
+
+        failed_attempts: list[dict[str, Any]] = []
+        for priority, candidate in enumerate(model_candidates, start=1):
+            chunk_count = 0
+            tool_call_count = 0
+            reply_parts: list[str] = []
+            has_emitted_text = False
+
+            logger.info(
+                "Starting streamed LangChain agent turn.",
+                extra={
+                    "conversation_public_id": context.conversation_public_id,
+                    "trigger_message_public_id": context.trigger_message_public_id,
+                    "provider": candidate.provider,
+                    "model_name": candidate.model_name,
+                    "model_priority": priority,
+                    "tool_count": len(tools),
+                },
+            )
+
+            try:
+                model = build_chat_model(self.settings, candidate)
+                agent = create_agent(
+                    model=model,
+                    tools=tools,
+                    system_prompt=system_prompt,
+                )
+
+                for chunk in agent.stream({"messages": messages}, stream_mode="messages"):
+                    delta = extract_stream_delta(chunk)
+                    tool_call_count += count_stream_tool_calls(chunk)
+                    if not delta:
+                        continue
+
+                    has_emitted_text = True
+                    chunk_count += 1
+                    reply_parts.append(delta)
+                    yield {"event": "delta", "data": {"content": delta}}
+
+                result = build_streamed_agent_result(
+                    reply_text="".join(reply_parts),
+                    model_name=candidate.model_name,
+                    provider=candidate.provider,
+                    chunk_count=chunk_count,
+                    tool_call_count=tool_call_count,
+                )
+            except AppException as exc:
+                if has_emitted_text:
+                    raise
+                failed_attempts.append(self._build_failed_attempt(priority, candidate, exc))
+                logger.warning(
+                    "Streamed LangChain agent model candidate failed.",
+                    extra={
+                        "provider": candidate.provider,
+                        "model_name": candidate.model_name,
+                        "error_code": exc.code,
+                        "error_message": exc.message,
+                    },
+                )
+                continue
+            except Exception as exc:
+                if has_emitted_text:
+                    raise
+                failed_attempts.append(self._build_failed_attempt(priority, candidate, exc))
+                logger.warning(
+                    "Streamed LangChain agent model candidate failed.",
+                    extra={
+                        "provider": candidate.provider,
+                        "model_name": candidate.model_name,
+                        "error_code": "AGENT_UPSTREAM_FAILED",
+                        "error_message": str(exc),
+                    },
+                )
+                continue
+
+            yield {
+                "event": "final",
+                "data": self._with_model_fallback_metadata(
+                    result=result,
+                    candidate=candidate,
+                    priority=priority,
+                    failed_attempts=failed_attempts,
+                ),
+            }
+            return
 
         raise AppException(
             502,

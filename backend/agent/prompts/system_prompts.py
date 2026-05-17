@@ -2,6 +2,18 @@
 
 from agent.contracts import AgentTurnContext, RagContext, WebSearchContext
 from agent.prompts.rag_prompts import render_retrieved_chunks
+from agent.tools.user_memory import render_user_memories
+
+
+def _build_rewrite_prompt(*, query: str, history: str) -> str:
+    history_section = history or "无"
+    return (
+        "你是 CookingAgent 的 RAG 查询改写器。请把用户当前输入改写成适合菜谱知识库向量检索的独立中文查询。\n"
+        "要求：只输出一行查询；保留食材、菜名、厨具、约束、份量和关键意图；不要回答问题；不要编造新条件。\n\n"
+        f"最近对话：\n{history_section}\n\n"
+        f"当前输入：{query}\n\n"
+        "改写后的检索查询："
+    )
 
 
 def build_system_prompt(context: AgentTurnContext) -> str:
@@ -13,6 +25,7 @@ def build_system_prompt(context: AgentTurnContext) -> str:
             "回答要直接、清晰、可执行。涉及步骤时优先使用分点或编号。",
             "不要编造不存在的文件、知识库来源、联网搜索结果或网页链接。",
             _build_conversation_summary_instruction(context),
+            _build_user_memory_instruction(context),
             _build_rag_instruction(context.rag_context),
             _build_web_search_instruction(context.web_search_context),
             _build_attachment_instruction(context),
@@ -20,6 +33,15 @@ def build_system_prompt(context: AgentTurnContext) -> str:
         ]
     )
 
+    def _build_rewrite_prompt(*, query: str, history: str) -> str:
+        history_section = history or "无"
+        return (
+            "你是 CookingAgent 的 RAG 查询改写器。请把用户当前输入改写成适合菜谱知识库向量检索的独立中文查询。\n"
+            "要求：只输出一行查询；保留食材、菜名、厨具、约束、份量和关键意图；不要回答问题；不要编造新条件。\n\n"
+            f"最近对话：\n{history_section}\n\n"
+            f"当前输入：{query}\n\n"
+            "改写后的检索查询："
+        )
 
 def _build_conversation_summary_instruction(context: AgentTurnContext) -> str:
     summary = (context.conversation_summary or "").strip()
@@ -31,6 +53,19 @@ def _build_conversation_summary_instruction(context: AgentTurnContext) -> str:
             "历史会话摘要如下。它由模型基于更早的消息压缩生成，用于补充最近消息之外的上下文。",
             "如果摘要和本轮用户明确表达冲突，请以本轮用户输入为准。",
             summary,
+        ]
+    )
+
+
+def _build_user_memory_instruction(context: AgentTurnContext) -> str:
+    if not context.user_memories:
+        return "本轮没有可用的用户长期记忆；不要臆测用户偏好、忌口、厨具或健康目标。"
+
+    return "\n".join(
+        [
+            render_user_memories(context.user_memories),
+            "如果长期记忆和本轮用户输入冲突，以本轮用户输入为准。",
+            "需要核对更多偏好时，可以调用 search_user_memory 工具。",
         ]
     )
 

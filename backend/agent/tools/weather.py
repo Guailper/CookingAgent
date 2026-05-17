@@ -44,7 +44,6 @@ def build_weather_tool(settings: Settings | None = None):
         try:
             with httpx.Client(timeout=tool_settings.weather_request_timeout_seconds) as client:
                 location_id, resolved_name = _lookup_location_id(client, tool_settings, city_name)
-                print(f"Resolved location '{city_name}' to id '{location_id}' with name '{resolved_name}'.")
                 weather_data = _fetch_weather(client, tool_settings, location_id, date_offset)
                 return _render_weather(resolved_name or city_name, date_offset, weather_data)
         except httpx.HTTPError as exc:
@@ -76,7 +75,7 @@ def _lookup_location_id(
     city_name: str,
 ) -> tuple[str, str]:
     response = client.get(
-        settings.weather_geo_base_url,
+        _normalize_geo_lookup_url(settings.weather_geo_base_url),
         params={
             "location": city_name,
             "key": settings.weather_api_key,
@@ -100,7 +99,7 @@ def _fetch_weather(
 ) -> dict[str, Any]:
     endpoint = "now" if date_offset == 0 else "7d"
     response = client.get(
-        settings.weather_api_base_url + endpoint,
+        _normalize_weather_base_url(settings.weather_api_base_url) + endpoint,
         params={
             "location": location_id,
             "key": settings.weather_api_key,
@@ -111,6 +110,30 @@ def _fetch_weather(
     if payload.get("code") != "200":
         raise ValueError(f"天气服务返回异常：{payload.get('code', 'unknown')}")
     return payload
+
+
+def _normalize_geo_lookup_url(base_url: str) -> str:
+    parsed = urlsplit((base_url or "").rstrip("/"))
+    path = parsed.path.rstrip("/")
+    if path.endswith("/geo/v2/city/lookup"):
+        normalized_path = path
+    elif path.endswith("/v2/city/lookup"):
+        normalized_path = f"{path[: -len('/v2/city/lookup')]}/geo/v2/city/lookup"
+    else:
+        normalized_path = f"{path}/geo/v2/city/lookup"
+
+    return urlunsplit((parsed.scheme, parsed.netloc, normalized_path, "", ""))
+
+
+def _normalize_weather_base_url(base_url: str) -> str:
+    parsed = urlsplit((base_url or "").rstrip("/"))
+    path = parsed.path.rstrip("/")
+    if path.endswith("/v7/weather"):
+        normalized_path = path
+    else:
+        normalized_path = f"{path}/v7/weather"
+
+    return urlunsplit((parsed.scheme, parsed.netloc, normalized_path, "", "")) + "/"
 
 
 def _render_weather(location: str, date_offset: int, payload: dict[str, Any]) -> str:

@@ -22,6 +22,7 @@ class AgentTurnContext:
     user_message_text: str
     conversation_summary: str | None = None
     recent_messages: list[AgentContextMessage] = field(default_factory=list)
+    user_memories: list["UserMemoryContextItem"] = field(default_factory=list)
     attachment_public_ids: list[str] = field(default_factory=list)
     knowledge_base_public_ids: list[str] = field(default_factory=list)
     request_options: dict[str, Any] = field(default_factory=dict)
@@ -42,6 +43,16 @@ class AgentTurnResult:
 
 
 @dataclass(frozen=True)
+class UserMemoryContextItem:
+    """One long-term user memory prepared for the LangChain agent context."""
+
+    public_id: str
+    memory_type: str
+    content: str
+    confidence: str = "1.0"
+
+
+@dataclass(frozen=True)
 class ActionIntent:
     """The high-level action selected before workflow execution."""
 
@@ -58,6 +69,7 @@ class RagContext:
     enabled: bool
     status: str
     query: str
+    rewritten_query: str | None = None
     knowledge_base_public_ids: list[str] = field(default_factory=list)
     chunks: list["RetrievedChunk"] = field(default_factory=list)
     decision: "RetrievalDecision | None" = None

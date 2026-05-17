@@ -1,13 +1,21 @@
 """用户长期记忆更新工作流。"""
 
 from dataclasses import dataclass
+from typing import Any
 
 from agent.contracts import ActionIntent, AgentTurnContext, AgentTurnResult
+from agent.factories.model_factory import build_chat_model
+from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from src.core.security import generate_public_id
+from src.core.config import Settings, get_settings
+from src.core.logging import get_logger
 from src.db.models.memory_item import MemoryItem
 from src.repositories.memory_repository import MemoryRepository
+
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -17,6 +25,21 @@ class ExtractedMemory:
     memory_type: str
     content: str
     confidence: float
+    source: str = "rule"
+
+
+class MemoryExtractionItem(BaseModel):
+    """Structured output item returned by the LangChain extraction chain."""
+
+    memory_type: str = Field(description="diet_restriction, taste_preference, appliance, health_goal, or general_preference")
+    content: str = Field(description="Normalized Chinese memory content")
+    confidence: float = Field(default=0.8, ge=0.0, le=1.0)
+
+
+class MemoryExtractionResult(BaseModel):
+    """Structured output envelope for long-term memory extraction."""
+
+    memories: list[MemoryExtractionItem] = Field(default_factory=list)
 
 
 class MemoryUpdateWorkflow:
@@ -24,8 +47,9 @@ class MemoryUpdateWorkflow:
 
     name = "memory_update_workflow"
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, settings: Settings | None = None) -> None:
         self.db = db
+        self.settings = settings or get_settings()
         self.memory_repository = MemoryRepository(db)
 
     def run(self, context: AgentTurnContext, intent: ActionIntent) -> AgentTurnResult:
@@ -51,7 +75,7 @@ class MemoryUpdateWorkflow:
                 memory_type=memory.memory_type,
                 content=memory.content,
                 confidence=f"{memory.confidence:.2f}",
-                extra_metadata={"extractor": "rule"},
+                extra_metadata={"extractor": memory.source},
             )
             self.memory_repository.create(item)
             created_items.append(self._to_snapshot(item))
@@ -87,6 +111,33 @@ class MemoryUpdateWorkflow:
         normalized_text = " ".join((text or "").strip().split())
         if not normalized_text:
             return []
+
+        extracted_by_model = self._extract_memories_with_langchain(normalized_text)
+        if extracted_by_model:
+            return self._dedupe_memories(extracted_by_model)
+
+        return self._extract_memories_by_rule(normalized_text)
+
+    def _extract_memories_with_langchain(self, normalized_text: str) -> list[ExtractedMemory]:
+        """Extract long-term memories through LangChain structured output."""
+
+        try:
+            model = build_chat_model(self.settings)
+            structured_model = model.with_structured_output(MemoryExtractionResult)
+            response = structured_model.invoke(
+                [
+                    SystemMessage(content=_memory_extraction_system_prompt()),
+                    HumanMessage(content=normalized_text),
+                ]
+            )
+        except Exception as exc:
+            logger.info("LangChain memory extraction failed; using rule fallback.", exc_info=exc)
+            return []
+
+        return _normalize_structured_memories(response)
+
+    def _extract_memories_by_rule(self, normalized_text: str) -> list[ExtractedMemory]:
+        """Rule fallback for explicit memory commands."""
 
         memories: list[ExtractedMemory] = []
         lowered = normalized_text.lower()
@@ -125,3 +176,52 @@ class MemoryUpdateWorkflow:
             "content": item.content,
             "confidence": item.confidence,
         }
+
+
+def _memory_extraction_system_prompt() -> str:
+    return "\n".join(
+        [
+            "你是 CookingAgent 的长期记忆抽取器。",
+            "只保存用户明确希望长期记住、或明显会影响后续做菜建议的信息。",
+            "可保存的信息包括：忌口、过敏、口味偏好、常用厨具、健康目标、家庭成员长期约束。",
+            "不要保存一次性问题、寒暄、临时菜单、模型回答内容或你推测出来的信息。",
+            "content 使用简洁中文，保留用户原意；无法确认时返回空 memories。",
+        ]
+    )
+
+
+def _normalize_structured_memories(response: Any) -> list[ExtractedMemory]:
+    if isinstance(response, MemoryExtractionResult):
+        items = response.memories
+    elif isinstance(response, dict):
+        raw_items = response.get("memories", [])
+        items = [
+            MemoryExtractionItem.model_validate(item)
+            for item in raw_items
+            if isinstance(item, dict)
+        ]
+    else:
+        raw_items = getattr(response, "memories", [])
+        items = [
+            item
+            for item in raw_items
+            if hasattr(item, "memory_type") and hasattr(item, "content")
+        ]
+
+    memories: list[ExtractedMemory] = []
+    for item in items:
+        memory_type = str(getattr(item, "memory_type", "")).strip()
+        content = str(getattr(item, "content", "")).strip()
+        if not memory_type or not content:
+            continue
+        confidence = _normalize_confidence(getattr(item, "confidence", 0.8))
+        memories.append(ExtractedMemory(memory_type, content, confidence, "langchain_structured"))
+
+    return memories
+
+
+def _normalize_confidence(value: Any) -> float:
+    try:
+        return min(1.0, max(0.0, float(value)))
+    except (TypeError, ValueError):
+        return 0.8

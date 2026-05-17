@@ -1,198 +1,261 @@
 # CookingAgent
 
-> 一个面向做菜场景的中文 AI Agent 全栈应用：把菜谱知识库、实时工具、多轮会话、附件和语音输入整合到同一个聊天工作台里。项目中使用的数据来源于 [程序员做饭指南](https://github.com/Anduin2017/HowToCook))
+> A Chinese cooking assistant powered by LangChain Agent, RAG, long-term memory, tools, and a full-stack chat workspace.
 
-![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=flat-square)
-![React](https://img.shields.io/badge/React-18-61dafb?style=flat-square)
-![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6?style=flat-square)
-![LangChain](https://img.shields.io/badge/LangChain-1.x-1c3c3c?style=flat-square)
-![Milvus](https://img.shields.io/badge/Milvus-RAG-00a1ea?style=flat-square)
-![MySQL](https://img.shields.io/badge/MySQL-8+-4479a1?style=flat-square)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com/)
+[![React](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=222)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![LangChain](https://img.shields.io/badge/LangChain-1.x-1C3C3C?style=flat-square)](https://www.langchain.com/)
+[![Milvus](https://img.shields.io/badge/Milvus-RAG-00A1EA?style=flat-square)](https://milvus.io/)
+[![License](https://img.shields.io/badge/License-Apache--2.0-blue?style=flat-square)](LICENSE)
 
-## 功能概览
+CookingAgent 是一个面向做菜场景的中文 AI Agent 应用。它把菜谱知识库、LangChain Tool Calling、多轮会话、用户长期记忆、附件解析、语音转写、联网搜索和天气查询整合到同一个聊天工作台中。
 
-- **菜谱问答**：回答食材处理、步骤规划、火候控制、替换方案和菜单搭配。
-- **RAG 知识库**：内置 `data/cook/dishes` 菜谱 Markdown 数据，切片后写入 Milvus 检索。
-- **联网补充**：知识库未命中时可用 SerpApi 自动补充网页搜索上下文，并要求回答引用来源。
-- **天气工具**：通过 QWeather 查询当前或未来 7 天内天气，用于时令菜、采购和用餐建议。
-- **模型降级链**：支持 Kimi、Xiaomi、AIHubMix、OpenAI-compatible、本地 OpenAI-compatible 服务等候选模型 fallback。
-- **多轮聊天工作台**：支持会话、历史消息、附件上传、语音转写、工作区搜索和设置面板。
-- **业务持久化**：用户、验证码、会话、消息、附件、解析结果、记忆项、AgentRun 运行快照均落库。
-- **缓存与限流**：Redis 可选，用于登录、验证码、Agent 请求限流和短期缓存。
+知识库数据主要来自 [程序员做饭指南 / HowToCook](https://github.com/Anduin2017/HowToCook)。
 
-## 技术栈
+## Table of Contents
 
-| 层 | 技术 |
+- [Features](#features)
+- [Architecture](#architecture)
+- [Tech Stack](#tech-stack)
+- [Project Structure](#project-structure)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [RAG Knowledge Base](#rag-knowledge-base)
+- [API Overview](#api-overview)
+- [Testing](#testing)
+- [Development Notes](#development-notes)
+- [Roadmap](#roadmap)
+- [License](#license)
+
+## Features
+
+| Capability | Description |
 | --- | --- |
-| 前端 | React, TypeScript, Vite, React Markdown |
-| 后端 | FastAPI, SQLAlchemy, Alembic, PyMySQL, Pydantic |
-| Agent | LangChain, Tool Calling |
-| RAG | Milvus, pymilvus, sentence-transformers, FlagEmbedding |
-| 工具 | WebSearch, WeatherSearch, Voice2Text |
-| 存储 | MySQL, Redis 可选, 本地文件系统 |
+| LangChain Agent | Uses `langchain.agents.create_agent` with tool calling and streaming responses. |
+| Model fallback | Keeps project-owned model selection and fallback order for Kimi, Xiaomi, AIHubMix, OpenAI-compatible, and local OpenAI-compatible services. |
+| RAG retrieval | Indexes local cooking Markdown documents into Milvus and retrieves relevant recipe chunks before answering. |
+| Query rewriting | Uses a LangChain Runnable chain to rewrite conversational questions into retrieval-friendly standalone queries. |
+| Long-term memory | Extracts user preferences with LangChain structured output, stores them in MySQL, injects them into prompts, and exposes a `search_user_memory` tool. |
+| Conversation context | Combines recent messages, rolling summaries, user memories, RAG context, web context, and attachment context for each turn. |
+| Web and weather tools | Uses SerpApi for web search and QWeather for weather-aware cooking suggestions. |
+| Attachments and voice | Supports file upload, attachment parsing, document ingestion, and local speech-to-text fallback. |
+| Persistence | Stores users, conversations, messages, attachments, parse results, memories, summaries, and agent run snapshots. |
+| Frontend workspace | React + TypeScript chat UI with conversation history, message streaming, attachments, voice input, and settings. |
 
-## 项目结构
+## Architecture
+
+```mermaid
+flowchart LR
+    U["User / Frontend"] --> API["FastAPI API"]
+    API --> SVC["AgentService"]
+    SVC --> CTX["AgentContextProvider"]
+    CTX --> DB[("MySQL")]
+    CTX --> MEM["User Memories"]
+    SVC --> ORCH["AgentOrchestrator"]
+    ORCH --> WF["Answer / Memory / Attachment / Ingest Workflows"]
+    WF --> RAG["RAG Context Builder"]
+    RAG --> MILVUS[("Milvus")]
+    WF --> WEB["Web Search Context"]
+    WF --> RUNNER["LangChainAgentRunner"]
+    RUNNER --> LC["LangChain create_agent"]
+    LC --> TOOLS["Tools: RAG, memory, web, weather, attachment"]
+    LC --> LLM["Custom model factory + fallback"]
+    SVC --> DB
+```
+
+Normal answer flow:
+
+1. The frontend sends a user message to the backend stream endpoint.
+2. The backend persists the user message and creates an `AgentRun`.
+3. `AgentContextProvider` loads recent messages, rolling summary, and long-term user memories.
+4. `AnswerWorkflow` builds RAG and web-search context when needed.
+5. `LangChainAgentRunner` creates a LangChain agent with project tools and the custom model factory.
+6. The assistant response is streamed to the frontend and persisted with run metadata.
+7. Conversation summary and long-term memory are updated as non-critical side effects.
+
+## Tech Stack
+
+| Layer | Technologies |
+| --- | --- |
+| Frontend | React 18, TypeScript, Vite, React Markdown |
+| Backend | FastAPI, SQLAlchemy, Alembic, Pydantic, PyMySQL |
+| Agent | LangChain 1.x, LangChain Core, LangChain OpenAI adapter, Tool Calling |
+| RAG | Milvus, pymilvus, sentence-transformers, FlagEmbedding |
+| Memory | MySQL `memory_items`, LangChain structured output, prompt injection, memory search tool |
+| Voice | faster-whisper local transcription |
+| Cache | Optional Redis |
+| Evaluation | RAGAS evaluation scripts and tests |
+
+## Project Structure
 
 ```text
-CookingAgent
-├─ frontend/                 # React 前端工作台
-│  ├─ src/components/        # 登录、聊天、设置组件
-│  ├─ src/hooks/             # 认证与聊天状态编排
-│  └─ src/services/          # API 请求封装
+CookingAgent/
 ├─ backend/
-│  ├─ main.py                # FastAPI 应用入口
-│  ├─ agent/                 # Agent 编排、工作流、工具、提示词
-│  │  ├─ tools/              # RAG、附件、天气、网页搜索、菜谱格式化工具
-│  │  ├─ workflows/          # 问答、附件解析、文档入库、记忆更新
-│  │  └─ web/                # RAG miss 后的网页搜索上下文构建
-│  ├─ src/api/               # API 路由
-│  ├─ src/services/          # 业务服务
-│  ├─ src/repositories/      # 数据访问
-│  ├─ src/rag/               # 切片、Embedding、Rerank、Milvus 检索
-│  └─ scripts/               # 数据入库脚本
-├─ data/                     # 本地菜谱 Markdown 数据，当前约 322 篇
-├─ models/                   # 本地 embedding / rerank / whisper 模型
+│  ├─ agent/
+│  │  ├─ factories/          # Model and tool factories
+│  │  ├─ memory/             # LangChain message/context providers
+│  │  ├─ orchestration/      # Intent routing and workflow dispatch
+│  │  ├─ prompts/            # System and RAG prompts
+│  │  ├─ rag/                # RAG policy, query rewrite, context builder
+│  │  ├─ tools/              # LangChain tools
+│  │  ├─ workflows/          # Answer, memory, attachment, document workflows
+│  │  └─ runner.py           # LangChain agent runtime wrapper
+│  ├─ src/
+│  │  ├─ api/                # FastAPI routers and dependencies
+│  │  ├─ core/               # Settings, logging, security, exceptions
+│  │  ├─ db/                 # SQLAlchemy session and models
+│  │  ├─ rag/                # Embedding, rerank, Milvus repository
+│  │  ├─ repositories/       # Data access layer
+│  │  ├─ services/           # Business services
+│  │  └─ tests/              # Backend tests
+│  ├─ scripts/               # Indexing and evaluation scripts
+│  └─ requirements.txt
+├─ frontend/
+│  ├─ src/components/        # Auth and chat UI components
+│  ├─ src/hooks/             # Auth and workspace state
+│  ├─ src/services/          # API clients
+│  └─ package.json
+├─ data/                     # Local cooking Markdown data
+├─ models/                   # Local embedding, rerank, and voice models
 └─ README.md
 ```
 
-## 工作流
+## Quick Start
 
-```text
-用户输入 / 附件 / 语音
-  -> 前端调用 /api/v1/agent/chat
-  -> 保存用户消息与 AgentRun
-  -> 解析意图并选择工作流
-  -> 默认检索 Milvus 菜谱知识库
-  -> 未命中时可补充 SerpApi 网页搜索
-  -> LangChain Agent 调用模型和工具
-  -> 失败时尝试候选模型，全部失败后返回本地降级回复
-  -> 保存助手消息和运行快照
-```
+### Prerequisites
 
-## 快速开始
-
-### 1. 环境要求
-
-- Python 3.10+
+- Python 3.12 recommended
+- Conda environment named `cook-agent`
 - Node.js 18+
 - MySQL 8+
 - Milvus 2.4+
-- Redis 可选
+- Redis optional
 
-### 2. 配置 `.env`
+### 1. Install backend dependencies
 
-在项目根目录创建 `.env`，按需填写：
-
-```env
-# App
-APP_SECRET_KEY=change-this-in-dev
-AUTO_CREATE_TABLES=true
-
-# MySQL
-MYSQL_HOST=127.0.0.1
-MYSQL_PORT=3306
-MYSQL_DATABASE=cooking_agent_db
-MYSQL_USER=root
-MYSQL_PASSWORD=
-
-# Agent model
-AGENT_MODEL_PROVIDER=kimi
-KIMI_BASE_URL=https://api.moonshot.cn/v1
-KIMI_API_KEY=your-kimi-api-key
-KIMI_MODEL_ID=kimi-k2.6
-AGENT_MODEL_FALLBACK_ORDER=kimi,xiaomi,aihubmix,local
-
-# Optional fallback providers
-XIAOMI_BASE_URL=
-XIAOMI_API_KEY=
-XIAOMI_MODEL_ID=
-AIHUBMIX_BASE_URL=
-AIHUBMIX_API_KEY=
-AIHUBMIX_MODEL_ID=gpt-4o-mini
-LOCAL_MODEL_BASE_URL=http://127.0.0.1:11434/v1
-LOCAL_MODEL_API_KEY=not-needed
-LOCAL_MODEL_ID=
-
-# RAG
-MILVUS_URI=http://127.0.0.1:19530
-MILVUS_COLLECTION=rag_chunks
-RAG_DEFAULT_KNOWLEDGE_BASE_IDS=cookbook
-RAG_EMBEDDING_MODEL_PATH=models/bge-small-zh-v1.5
-RAG_RERANK_MODEL_PATH=models/bge-reranker-v2-m3
-
-# Tools
-SERPAPI_API_KEY=
-WEATHER_API_KEY=
-
-# Voice
-VOICE_TRANSCRIBE_PROVIDER=local_faster_whisper
-VOICE_LOCAL_MODEL=small
-
-# Redis
-REDIS_ENABLED=false
-REDIS_URL=redis://127.0.0.1:6379/0
+```powershell
+conda activate cook-agent
+cd backend
+python -m pip install -r requirements.txt
 ```
 
-前端开发代理默认指向 `http://127.0.0.1:8000`，可通过 `VITE_BACKEND_URL` 覆盖。
+### 2. Install frontend dependencies
 
-### 3. 启动后端
+```powershell
+cd frontend
+npm install
+```
 
-```bash
+### 3. Create `.env`
+
+Copy the example environment file and fill in your local secrets:
+
+```powershell
+Copy-Item example.env .env
+```
+
+### 4. Start backend
+
+```powershell
+conda activate cook-agent
 cd backend
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
 uvicorn main:app --reload
 ```
 
-- 健康检查：`http://127.0.0.1:8000/health`
-- API 文档：`http://127.0.0.1:8000/docs`
+Useful URLs:
 
-### 4. 写入菜谱知识库
+- Health check: <http://127.0.0.1:8000/health>
+- OpenAPI docs: <http://127.0.0.1:8000/docs>
 
-```bash
-cd backend
-python scripts/index_data_to_milvus.py --data-dir data --knowledge-base-id cookbook --rebuild
-```
+### 5. Start frontend
 
-### 5. 启动前端
-
-```bash
+```powershell
 cd frontend
-npm install
 npm run dev
 ```
 
-## API 一览
+The frontend dev server proxies API requests to `http://127.0.0.1:8000` by default. Use `VITE_BACKEND_URL` if you need a different backend URL.
 
-| 能力 | 路由 |
+## Configuration
+
+All supported environment variables are documented in [example.env](example.env). The most important groups are:
+
+| Group | Variables |
 | --- | --- |
-| 认证与用户 | `/api/v1/auth/*` |
-| 会话 | `/api/v1/conversations` |
-| 消息 | `/api/v1/conversations/{id}/messages` |
-| Agent 对话 | `/api/v1/agent/chat` |
-| 附件 | `/api/v1/conversations/{id}/attachments`, `/api/v1/attachments/{id}` |
-| 语音转写 | `/api/v1/voice/transcriptions` |
+| App and database | `APP_SECRET_KEY`, `AUTO_CREATE_TABLES`, `MYSQL_*` |
+| Agent model | `AGENT_MODEL_PROVIDER`, `AGENT_MODEL_FALLBACK_ORDER`, `KIMI_*`, `AIHUBMIX_*`, `LOCAL_MODEL_*` |
+| RAG and Milvus | `MILVUS_*`, `RAG_*` |
+| External tools | `SERPAPI_API_KEY`, `WEATHER_API_KEY` |
+| Voice and cache | `VOICE_*`, `REDIS_*` |
 
-## 测试与构建
+## RAG Knowledge Base
 
-```bash
-# 后端测试
+Index local Markdown data into Milvus:
+
+```powershell
+conda activate cook-agent
 cd backend
-python -m unittest discover src/tests
+python scripts/index_data_to_milvus.py --data-dir ..\data --knowledge-base-id cookbook --rebuild
+```
 
-# 前端构建
+Notes:
+
+- Use `--rebuild` only when you want to drop and recreate the configured Milvus collection.
+- Changing `RAG_EMBEDDING_MODEL_PATH` or vector dimension requires rebuilding the collection.
+- The current long-term user memory feature does not use the vector database; it reads from MySQL and is injected into the LangChain agent context.
+
+## API Overview
+
+| Area | Endpoint |
+| --- | --- |
+| Auth | `/api/v1/auth/*` |
+| Conversations | `/api/v1/conversations` |
+| Messages | `/api/v1/conversations/{conversation_id}/messages` |
+| Agent chat | `/api/v1/agent/chat/stream` |
+| Attachments | `/api/v1/conversations/{conversation_id}/attachments` |
+| Voice transcription | `/api/v1/voice/transcriptions` |
+
+OpenAPI documentation is available at `/docs` when the backend is running.
+
+## Testing
+
+Run backend tests:
+
+```powershell
+conda activate cook-agent
+python -m pytest backend/src/tests
+```
+
+Run frontend build:
+
+```powershell
 cd frontend
 npm run build
 ```
 
-## 开发备注
+Current verified backend status:
 
-- `AUTO_CREATE_TABLES=true` 适合本地开发；生产环境建议使用迁移流程。
-- `SERPAPI_API_KEY` 和 `WEATHER_API_KEY` 为空时，对应工具会优雅降级。
-- 模型候选顺序由 `AGENT_MODEL_FALLBACK_ORDER` 控制，未配置时会按可用环境变量自动推断。
-- `.env` 内的 API Key、数据库密码、SMTP 密码不要提交。
+```text
+63 passed
+```
+
+## Development Notes
+
+- Keep model creation inside `backend/agent/factories/model_factory.py`; LangChain should use the project-owned model factory and fallback candidates.
+- `AUTO_CREATE_TABLES=true` is convenient for local development. Use migrations for production deployments.
+- `memory_items` and `conversation_summaries` must exist before enabling long-term memory and rolling summaries in production.
+- SerpApi and QWeather are optional. If their keys are missing, the corresponding tools degrade gracefully.
+- Do not commit `.env`, API keys, database passwords, SMTP passwords, local model files, or generated evaluation artifacts.
+
+## Roadmap
+
+- [ ] Add production-grade Alembic migrations for all current tables.
+- [ ] Add optional vector retrieval for long-term user memory.
+- [ ] Add CI badges after GitHub Actions are configured.
+- [ ] Add screenshots or a short demo GIF for the chat workspace.
+- [ ] Add deployment examples for Docker Compose and cloud environments.
 
 ## License
 
-[Apache-2.0](LICENSE)
+This project is licensed under the [Apache License 2.0](LICENSE).

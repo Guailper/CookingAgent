@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote_plus
 
 from dotenv import load_dotenv
@@ -325,6 +327,21 @@ def _get_csv_env(name: str, default: list[str]) -> list[str]:
     return [value for value in values if value]
 
 
+def _get_json_object_env(name: str) -> dict[str, Any]:
+    """Read a JSON object from an environment variable."""
+
+    raw_value = os.getenv(name, "").strip()
+    if not raw_value:
+        return {}
+
+    try:
+        value = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return {}
+
+    return value if isinstance(value, dict) else {}
+
+
 @dataclass(frozen=True)
 class AgentModelCandidate:
     """One OpenAI-compatible chat model endpoint in the fallback chain."""
@@ -407,6 +424,7 @@ class Settings:
     agent_max_output_tokens: int
     agent_disable_reasoning: bool
     agent_model_candidates: list[AgentModelCandidate]
+    agent_mcp_servers: dict[str, dict[str, Any]]
     weather_api_key: str
     weather_api_base_url: str
     weather_geo_base_url: str
@@ -435,6 +453,9 @@ class Settings:
     rag_vector_top_k: int
     rag_final_top_k: int
     rag_min_score: float
+    rag_query_rewrite_enabled: bool
+    rag_query_rewrite_temperature: float
+    rag_query_rewrite_max_chars: int
     rag_chunk_target_size: int
     rag_chunk_max_size: int
     rag_chunk_overlap_size: int
@@ -576,6 +597,7 @@ def get_settings() -> Settings:
             primary_api_key=agent_api_key.strip(),
             primary_model_name=agent_model_name.strip(),
         ),
+        agent_mcp_servers=_get_json_object_env("AGENT_MCP_SERVERS_JSON"),
         weather_api_key=(
             os.getenv("WEATHER_API_KEY")
             or ""
@@ -644,6 +666,9 @@ def get_settings() -> Settings:
         rag_vector_top_k=_get_int_env("RAG_VECTOR_TOP_K", 20),
         rag_final_top_k=_get_int_env("RAG_FINAL_TOP_K", 5),
         rag_min_score=_get_float_env("RAG_MIN_SCORE", 0.25),
+        rag_query_rewrite_enabled=_get_bool_env("RAG_QUERY_REWRITE_ENABLED", True),
+        rag_query_rewrite_temperature=_get_float_env("RAG_QUERY_REWRITE_TEMPERATURE", 0.6),
+        rag_query_rewrite_max_chars=_get_int_env("RAG_QUERY_REWRITE_MAX_CHARS", 180),
         rag_chunk_target_size=_get_int_env("RAG_CHUNK_TARGET_SIZE", 700),
         rag_chunk_max_size=_get_int_env("RAG_CHUNK_MAX_SIZE", 1000),
         rag_chunk_overlap_size=_get_int_env("RAG_CHUNK_OVERLAP_SIZE", 100),

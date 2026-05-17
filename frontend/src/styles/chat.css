@@ -974,6 +974,36 @@
   background: transparent;
 }
 
+.message-bubble__streaming-cursor,
+.message-bubble__inline-cursor {
+  display: inline-block;
+  width: 7px;
+  height: 1.1em;
+  border-radius: 999px;
+  background: #4f6f99;
+  animation: message-cursor-blink 1s ease-in-out infinite;
+}
+
+.message-bubble__streaming-cursor {
+  margin-top: 2px;
+}
+
+.message-bubble__inline-cursor {
+  margin-left: 4px;
+  vertical-align: -0.18em;
+}
+
+@keyframes message-cursor-blink {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
 .message-bubble__attachments {
   display: grid;
   gap: 10px;

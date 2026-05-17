@@ -9,6 +9,7 @@ from src.core.exceptions import AppException
 def build_chat_model(
     settings: Settings,
     model_config: AgentModelCandidate | None = None,
+    temperature: float | None = None,
 ) -> Any:
     """Create the configured OpenAI-compatible LangChain chat model."""
 
@@ -71,7 +72,11 @@ def build_chat_model(
         model=model_name,
         api_key=api_key,
         base_url=base_url.rstrip("/"),
-        temperature=_resolve_temperature(settings, provider, model_name),
+        temperature=(
+            temperature
+            if temperature is not None
+            else _resolve_temperature(settings, provider, model_name)
+        ),
         max_tokens=(
             settings.agent_max_output_tokens
             if settings.agent_max_output_tokens > 0

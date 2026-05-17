@@ -6,7 +6,7 @@
  */
 
 import type {
-  ApiAgentChatResponse,
+  ApiAgentChatDoneData,
   ApiAttachmentItem,
   ApiAttachmentUploadResponse,
   ApiConversationDetailResponse,
@@ -592,9 +592,106 @@ type SendRemoteMessageOptions = {
   extraMetadata?: Record<string, unknown>;
 };
 
-export async function sendAgentMessage(
+type SendAgentMessageStreamHandlers = {
+  onUserMessage?: (message: ChatMessage) => void;
+  onAssistantDelta?: (content: string) => void;
+  onDone?: (payload: { userMessage: ChatMessage; assistantMessage: ChatMessage }) => void;
+};
+
+function parseServerSentEventBlock(block: string) {
+  let eventName = "message";
+  const dataLines: string[] = [];
+
+  for (const line of block.split(/\r?\n/)) {
+    if (line.startsWith("event:")) {
+      eventName = line.slice("event:".length).trim();
+    }
+
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice("data:".length).trimStart());
+    }
+  }
+
+  return {
+    eventName,
+    dataText: dataLines.join("\n"),
+  };
+}
+
+async function readAgentStream(
+  response: Response,
+  handlers: SendAgentMessageStreamHandlers,
+) {
+  if (!response.body) {
+    throw new ChatServiceError(
+      "stream_unavailable",
+      "无法读取流式回复",
+      "浏览器没有返回可读取的响应流，请稍后重试。",
+    );
+  }
+
+  const decoder = new TextDecoder("utf-8");
+  const reader = response.body.getReader();
+  let bufferedText = "";
+  let finalPayload: { userMessage: ChatMessage; assistantMessage: ChatMessage } | null = null;
+
+  while (true) {
+    const { value, done } = await reader.read();
+    bufferedText += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+    const blocks = bufferedText.split(/\r?\n\r?\n/);
+    bufferedText = blocks.pop() ?? "";
+
+    for (const block of blocks) {
+      const { eventName, dataText } = parseServerSentEventBlock(block);
+      if (!dataText) {
+        continue;
+      }
+
+      const payload = JSON.parse(dataText) as unknown;
+      if (eventName === "user_message") {
+        handlers.onUserMessage?.(mapApiMessage(payload as ApiMessageItem));
+      }
+
+      if (eventName === "delta") {
+        const content =
+          payload && typeof payload === "object" && "content" in payload
+            ? String((payload as { content?: unknown }).content ?? "")
+            : "";
+        if (content) {
+          handlers.onAssistantDelta?.(content);
+        }
+      }
+
+      if (eventName === "done") {
+        const donePayload = payload as ApiAgentChatDoneData;
+        finalPayload = {
+          userMessage: mapApiMessage(donePayload.user_message),
+          assistantMessage: mapApiMessage(donePayload.assistant_message),
+        };
+        handlers.onDone?.(finalPayload);
+      }
+    }
+
+    if (done) {
+      break;
+    }
+  }
+
+  if (!finalPayload) {
+    throw new ChatServiceError(
+      "stream_incomplete",
+      "流式回复未完成",
+      "后端连接已结束，但没有收到完整的助手回复。",
+    );
+  }
+
+  return finalPayload;
+}
+
+export async function sendAgentMessageStream(
   conversationId: string,
   options: SendRemoteMessageOptions,
+  handlers: SendAgentMessageStreamHandlers = {},
 ): Promise<{
   userMessage: ChatMessage;
   assistantMessage: ChatMessage;
@@ -610,21 +707,32 @@ export async function sendAgentMessage(
     );
   }
 
-  const response = await requestJson<ApiAgentChatResponse>("/agent/chat", {
-    method: "POST",
-    headers: getJsonAuthHeaders(),
-    body: JSON.stringify({
-      conversation_id: conversationId,
-      content: normalizedContent,
-      attachment_ids: normalizedAttachmentIds,
-      extra_metadata: options.extraMetadata ?? null,
-    }),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/agent/chat/stream`, {
+      method: "POST",
+      headers: getJsonAuthHeaders(),
+      body: JSON.stringify({
+        conversation_id: conversationId,
+        content: normalizedContent,
+        attachment_ids: normalizedAttachmentIds,
+        extra_metadata: options.extraMetadata ?? null,
+      }),
+    });
+  } catch {
+    throw new ChatServiceError(
+      "network_error",
+      "无法连接后端服务",
+      "当前无法连接到后端服务，请确认前后端都已正常启动。",
+    );
+  }
 
-  return {
-    userMessage: mapApiMessage(response.data.user_message),
-    assistantMessage: mapApiMessage(response.data.assistant_message),
-  };
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as ApiErrorResponse | null;
+    throw toChatServiceError(payload, response.status);
+  }
+
+  return readAgentStream(response, handlers);
 }
 
 export function createPromptSuggestions(): PromptSuggestion[] {

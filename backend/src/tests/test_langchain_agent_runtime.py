@@ -12,6 +12,7 @@ from agent.contracts import (
     RagContext,
     RetrievalDecision,
     RetrievedChunk,
+    UserMemoryContextItem,
     WebSearchContext,
     WebSearchResult,
 )
@@ -20,6 +21,7 @@ from agent.factories.model_factory import (
     _should_disable_reasoning,
     build_chat_model,
 )
+from agent.factories.tool_factory import _filter_mcp_only_tools, build_tools
 from agent.fallback import build_fallback_result
 from agent.output.normalizer import build_agent_result
 from agent.prompts.system_prompts import build_system_prompt
@@ -48,8 +50,12 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
             "agent_max_output_tokens": 512,
             "agent_disable_reasoning": True,
             "agent_model_candidates": [],
+            "agent_mcp_servers": {},
             "rag_default_knowledge_base_ids": ["cookbook"],
             "rag_final_top_k": 3,
+            "rag_query_rewrite_enabled": False,
+            "rag_query_rewrite_temperature": 0.0,
+            "rag_query_rewrite_max_chars": 180,
             "weather_api_key": "",
             "weather_api_base_url": "https://devapi.qweather.com",
             "weather_geo_base_url": "https://geoapi.qweather.com",
@@ -124,6 +130,28 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
         self.assertIn("历史会话摘要", prompt)
         self.assertIn("不吃香菜", prompt)
         self.assertIn("本轮用户输入为准", prompt)
+
+    def test_system_prompt_includes_user_long_term_memories(self) -> None:
+        context = self._context()
+        context = AgentTurnContext(
+            **{
+                **context.__dict__,
+                "user_memories": [
+                    UserMemoryContextItem(
+                        public_id="mem_1",
+                        memory_type="diet_restriction",
+                        content="用户不吃香菜",
+                        confidence="0.90",
+                    )
+                ],
+            }
+        )
+
+        prompt = build_system_prompt(context)
+
+        self.assertIn("用户长期记忆", prompt)
+        self.assertIn("用户不吃香菜", prompt)
+        self.assertIn("search_user_memory", prompt)
 
     def test_system_prompt_explains_skipped_rag_context(self) -> None:
         context = self._context(text="谢谢")
@@ -365,6 +393,37 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
         self.assertIn("红烧肉做法", result)
         self.assertIn("https://example.com/recipe", result)
 
+    def test_tool_factory_keeps_non_mcp_local_tools_without_mcp_config(self) -> None:
+        tools = build_tools(self._context(), self._settings(agent_mcp_servers={}))
+
+        tool_names = {tool.__name__ for tool in tools}
+        self.assertEqual(
+            tool_names,
+            {
+                "read_attachment_context",
+                "search_user_memory",
+                "rag_search",
+                "web_search",
+                "get_weather",
+                "format_recipe_plan",
+            },
+        )
+
+    def test_tool_factory_filters_mcp_tools_to_rag_web_and_weather(self) -> None:
+        tools = [
+            SimpleNamespace(name="rag_search"),
+            SimpleNamespace(name="web-search"),
+            SimpleNamespace(name="get_weather"),
+            SimpleNamespace(name="email_sender"),
+        ]
+
+        filtered_tools = _filter_mcp_only_tools(tools)
+
+        self.assertEqual(
+            [tool.name for tool in filtered_tools],
+            ["rag_search", "web-search", "get_weather"],
+        )
+
     def test_rag_context_builder_marks_miss_when_default_retrieval_has_no_chunks(self) -> None:
         with patch("agent.rag.context_builder.RagRetriever") as retriever_cls:
             retriever_cls.return_value.retrieve.return_value = []
@@ -401,12 +460,28 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
         self.assertTrue(rag_context.decision.should_retrieve)
         retriever_cls.return_value.retrieve.assert_called_once()
 
+    def test_rag_context_builder_uses_rewritten_query_for_retrieval(self) -> None:
+        fake_rewriter = SimpleNamespace(rewrite=lambda context: "蛋炒饭 隔夜饭 鸡蛋 做法")
+        with patch("agent.rag.context_builder.RagRetriever") as retriever_cls:
+            retriever_cls.return_value.retrieve.return_value = []
+
+            rag_context = RagContextBuilder(
+                self._settings(),
+                query_rewriter=fake_rewriter,
+            ).build(self._context(text="这个怎么做？", knowledge_base_public_ids=[]))
+
+        call_kwargs = retriever_cls.return_value.retrieve.call_args.kwargs
+        self.assertEqual(call_kwargs["query"], "蛋炒饭 隔夜饭 鸡蛋 做法")
+        self.assertEqual(rag_context.query, "这个怎么做？")
+        self.assertEqual(rag_context.rewritten_query, "蛋炒饭 隔夜饭 鸡蛋 做法")
+
     def test_rag_context_snapshot_keeps_chunk_citations_and_decision(self) -> None:
         snapshot = rag_context_to_snapshot(
             RagContext(
                 enabled=True,
                 status="hit",
                 query="蛋炒饭",
+                rewritten_query="蛋炒饭 做法",
                 knowledge_base_public_ids=["cookbook"],
                 decision=RetrievalDecision(
                     should_retrieve=True,
@@ -429,6 +504,7 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
         )
 
         self.assertEqual(snapshot["status"], "hit")
+        self.assertEqual(snapshot["rewritten_query"], "蛋炒饭 做法")
         self.assertEqual(snapshot["chunk_count"], 1)
         self.assertEqual(snapshot["chunks"][0]["document_public_id"], "doc_1")
         self.assertTrue(snapshot["decision"]["should_retrieve"])

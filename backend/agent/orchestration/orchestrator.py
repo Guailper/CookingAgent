@@ -28,6 +28,17 @@ class AgentOrchestrator:
         workflow = self._resolve_workflow(intent.intent_type)
         return workflow.run(context, intent)
 
+    def stream(self, context: AgentTurnContext):
+        """Stream answer turns and fall back to one final event for other workflows."""
+
+        intent = self.intent_resolver.resolve(context)
+        workflow = self._resolve_workflow(intent.intent_type)
+        if hasattr(workflow, "stream"):
+            yield from workflow.stream(context, intent)
+            return
+
+        yield {"event": "final", "data": workflow.run(context, intent)}
+
     def _resolve_workflow(self, intent_type: str):
         if intent_type == "document_ingest":
             return DocumentIngestWorkflow(self.db, settings=self.runner.settings)

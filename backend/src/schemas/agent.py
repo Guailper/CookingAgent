@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.schemas.message import MessageExtraMetadata, MessageItem
+from src.schemas.message import MessageExtraMetadata
 
 
 class AgentChatRequest(BaseModel):
@@ -44,17 +44,3 @@ class AgentRunItem(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-
-class AgentChatData(BaseModel):
-    """Combined result returned after one agent chat execution."""
-
-    user_message: MessageItem
-    assistant_message: MessageItem
-    agent_run: AgentRunItem
-
-
-class AgentChatResponse(BaseModel):
-    """Envelope for one successful agent chat round."""
-
-    message: str
-    data: AgentChatData

@@ -13,7 +13,11 @@ from agent.contracts import AgentTurnContext
 from agent.orchestration.intent_resolver import ActionIntentResolver
 from agent.workflows.attachment_parse_workflow import AttachmentParseWorkflow
 from agent.workflows.document_ingest_workflow import DocumentIngestWorkflow
-from agent.workflows.memory_update_workflow import MemoryUpdateWorkflow
+from agent.workflows.memory_update_workflow import (
+    MemoryExtractionItem,
+    MemoryExtractionResult,
+    MemoryUpdateWorkflow,
+)
 from src.db.models.attachment import Attachment
 from src.db.models.conversation import Conversation
 from src.db.models.conversation_summary import ConversationSummary
@@ -292,6 +296,43 @@ class AgentWorkflowTests(unittest.TestCase):
             self.assertIn("已记住 1 条偏好", result.reply_text)
             self.assertEqual(memory.memory_type, "diet_restriction")
             self.assertIn("不吃香菜", memory.content)
+        finally:
+            db.close()
+
+    def test_memory_update_workflow_uses_langchain_structured_output(self) -> None:
+        db = self.SessionLocal()
+        context = self._context("以后给我推荐少油少盐的菜")
+
+        class _FakeStructuredModel:
+            def invoke(self, messages):
+                _ = messages
+                return MemoryExtractionResult(
+                    memories=[
+                        MemoryExtractionItem(
+                            memory_type="health_goal",
+                            content="用户偏好少油少盐的菜",
+                            confidence=0.88,
+                        )
+                    ]
+                )
+
+        class _FakeModel:
+            def with_structured_output(self, schema):
+                self.schema = schema
+                return _FakeStructuredModel()
+
+        try:
+            with patch(
+                "agent.workflows.memory_update_workflow.build_chat_model",
+                return_value=_FakeModel(),
+            ):
+                result = MemoryUpdateWorkflow(db).run(context, self._intent(context))
+
+            memory = db.query(MemoryItem).one()
+            self.assertEqual(result.workflow_name, "memory_update_workflow")
+            self.assertEqual(memory.memory_type, "health_goal")
+            self.assertEqual(memory.content, "用户偏好少油少盐的菜")
+            self.assertEqual(memory.extra_metadata["extractor"], "langchain_structured")
         finally:
             db.close()
 

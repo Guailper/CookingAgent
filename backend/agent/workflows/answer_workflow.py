@@ -45,6 +45,37 @@ class AnswerWorkflow:
         result = self.runner.run(enriched_context)
         return self._with_workflow_metadata(result, intent, rag_context, web_search_context)
 
+    def stream(self, context: AgentTurnContext, intent: ActionIntent):
+        """Stream the answer workflow while preserving final workflow metadata."""
+
+        rag_context = self.rag_context_builder.build(context)
+        web_search_context = self.web_search_context_builder.build(context, rag_context)
+        enriched_context = replace(
+            context,
+            rag_context=rag_context,
+            web_search_context=web_search_context,
+        )
+
+        for event in self.runner.stream(enriched_context):
+            if event.get("event") != "final":
+                yield event
+                continue
+
+            result = event.get("data")
+            if not isinstance(result, AgentTurnResult):
+                yield event
+                continue
+
+            yield {
+                "event": "final",
+                "data": self._with_workflow_metadata(
+                    result,
+                    intent,
+                    rag_context,
+                    web_search_context,
+                ),
+            }
+
     def _with_workflow_metadata(
         self,
         result: AgentTurnResult,

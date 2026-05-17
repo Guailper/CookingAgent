@@ -1,6 +1,7 @@
 """Build structured RAG context before answer generation."""
 
 from agent.contracts import AgentTurnContext, RagContext, RetrievedChunk
+from agent.rag.query_rewriter import QueryRewriter
 from agent.rag.retrieval_policy import RetrievalPolicy
 from src.core.config import Settings, get_settings
 from src.core.exceptions import AppException
@@ -18,10 +19,12 @@ class RagContextBuilder:
         settings: Settings | None = None,
         retriever: RagRetriever | None = None,
         retrieval_policy: RetrievalPolicy | None = None,
+        query_rewriter: QueryRewriter | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self.retriever = retriever or RagRetriever(self.settings)
         self.retrieval_policy = retrieval_policy or RetrievalPolicy()
+        self.query_rewriter = query_rewriter or QueryRewriter(self.settings)
 
     def build(self, context: AgentTurnContext) -> RagContext:
         knowledge_base_ids = self._resolve_knowledge_base_ids(context)
@@ -47,8 +50,9 @@ class RagContextBuilder:
             )
 
         try:
+            rewritten_query = self.query_rewriter.rewrite(context)
             chunks = self.retriever.retrieve(
-                query=query,
+                query=rewritten_query or query,
                 knowledge_base_public_ids=knowledge_base_ids,
                 final_top_k=self.settings.rag_final_top_k,
             )
@@ -82,6 +86,7 @@ class RagContextBuilder:
             enabled=True,
             status="hit" if chunks else "miss",
             query=query,
+            rewritten_query=rewritten_query if rewritten_query != query else None,
             knowledge_base_public_ids=knowledge_base_ids,
             chunks=chunks,
             decision=decision,
@@ -108,6 +113,7 @@ def rag_context_to_snapshot(rag_context: RagContext | None) -> dict:
         "enabled": rag_context.enabled,
         "status": rag_context.status,
         "query": rag_context.query,
+        "rewritten_query": rag_context.rewritten_query,
         "knowledge_base_public_ids": rag_context.knowledge_base_public_ids,
         "chunk_count": len(rag_context.chunks),
         "chunks": [_chunk_to_snapshot(chunk) for chunk in rag_context.chunks],

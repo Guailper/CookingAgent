@@ -98,8 +98,8 @@ export type ApiAgentRunItem = {
 
 export type ApiMessageResponse = ApiEnvelope<ApiMessageItem>;
 export type ApiMessageListResponse = ApiEnvelope<ApiMessageItem[]>;
-export type ApiAgentChatResponse = ApiEnvelope<{
+export type ApiAgentChatDoneData = {
   user_message: ApiMessageItem;
   assistant_message: ApiMessageItem;
   agent_run: ApiAgentRunItem;
-}>;
+};

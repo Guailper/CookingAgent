@@ -21,7 +21,7 @@ import {
   mergeMessagesIntoConversation,
   removeRemoteAttachment,
   searchWorkspaceContent,
-  sendAgentMessage,
+  sendAgentMessageStream,
   transcribeVoiceToText,
   uploadConversationAttachments,
   validateAttachmentSelection,
@@ -85,23 +85,56 @@ function createOptimisticUserMessage(
   };
 }
 
+function createStreamingAssistantMessage(): ChatMessage {
+  const now = new Date();
+
+  return {
+    id: `streaming-assistant-${now.getTime()}`,
+    role: "assistant",
+    content: "",
+    createdAt: formatOptimisticMessageTime(now),
+    status: "streaming",
+    messageType: "text",
+    attachments: [],
+    extraMetadata: { streaming: true },
+  };
+}
+
 function removeMessageFromConversation(
   conversation: ChatConversation,
   messageId: string,
 ): ChatConversation {
+  return removeMessagesFromConversation(conversation, [messageId]);
+}
+
+function removeMessagesFromConversation(
+  conversation: ChatConversation,
+  messageIds: string[],
+): ChatConversation {
+  const messageIdSet = new Set(messageIds);
+
   return {
     ...conversation,
-    messages: conversation.messages.filter((message) => message.id !== messageId),
+    messages: conversation.messages.filter((message) => !messageIdSet.has(message.id)),
   };
 }
 
-function replaceOptimisticMessageInConversation(
+function appendMessageContent(
   conversation: ChatConversation,
-  optimisticMessageId: string,
-  replacementMessages: ChatMessage[],
+  messageId: string,
+  contentDelta: string,
 ): ChatConversation {
-  const withoutOptimisticMessage = removeMessageFromConversation(conversation, optimisticMessageId);
-  return mergeMessagesIntoConversation(withoutOptimisticMessage, replacementMessages);
+  return {
+    ...conversation,
+    messages: conversation.messages.map((message) =>
+      message.id === messageId
+        ? {
+            ...message,
+            content: `${message.content}${contentDelta}`,
+          }
+        : message,
+    ),
+  };
 }
 
 function toWorkspaceNotice(error: unknown): Notice {
@@ -404,7 +437,7 @@ export function useWorkspace({ user, onUnauthorized }: UseWorkspaceOptions) {
     setIsSendingMessage(true);
     if (shouldClearTypedDraftImmediately) {
       // Clear the controlled textarea before any network request starts.
-      // Previously the draft was cleared only after `/agent/chat` returned, so the
+      // Previously the draft was cleared only after the agent response returned, so the
       // text stayed visible while the agent was creating a conversation, uploading
       // attachments, and waiting for the model response. If the request fails, the
       // catch block restores this snapshot so the user does not lose their input.
@@ -490,36 +523,85 @@ export function useWorkspace({ user, onUnauthorized }: UseWorkspaceOptions) {
         });
       }
 
-      const { userMessage, assistantMessage } = await sendAgentMessage(targetConversationId, {
-        content: nextPrompt,
-        attachmentIds,
-        extraMetadata: {
-          input_source: draftInputSource,
+      let streamingAssistantMessageId: string | null = null;
+
+      await sendAgentMessageStream(
+        targetConversationId,
+        {
+          content: nextPrompt,
+          attachmentIds,
+          extraMetadata: {
+            input_source: draftInputSource,
+          },
         },
-      });
+        {
+          onUserMessage: (userMessage) => {
+            const streamingAssistantMessage = createStreamingAssistantMessage();
+            streamingAssistantMessageId = streamingAssistantMessage.id;
 
-      setConversations((currentConversations) => {
-        const currentConversation =
-          currentConversations.find((conversation) => conversation.id === targetConversationId) ??
-          createdConversation;
+            setConversations((currentConversations) => {
+              const currentConversation =
+                currentConversations.find(
+                  (conversation) => conversation.id === targetConversationId,
+                ) ?? createdConversation;
 
-        if (!currentConversation) {
-          return currentConversations;
-        }
+              if (!currentConversation) {
+                return currentConversations;
+              }
 
-        const nextConversation = mergeMessagesIntoConversation(currentConversation, [
-          userMessage,
-          assistantMessage,
-        ]);
-        const reconciledConversation = optimisticMessageId
-          ? replaceOptimisticMessageInConversation(currentConversation, optimisticMessageId, [
-              userMessage,
-              assistantMessage,
-            ])
-          : nextConversation;
+              const conversationWithoutPending = optimisticMessageId
+                ? removeMessageFromConversation(currentConversation, optimisticMessageId)
+                : currentConversation;
+              const nextConversation = mergeMessagesIntoConversation(conversationWithoutPending, [
+                userMessage,
+                streamingAssistantMessage,
+              ]);
 
-        return upsertConversation(currentConversations, reconciledConversation, true);
-      });
+              return upsertConversation(currentConversations, nextConversation, true);
+            });
+          },
+          onAssistantDelta: (contentDelta) => {
+            if (!streamingAssistantMessageId) {
+              return;
+            }
+
+            setConversations((currentConversations) =>
+              currentConversations.map((conversation) =>
+                conversation.id === targetConversationId
+                  ? appendMessageContent(conversation, streamingAssistantMessageId!, contentDelta)
+                  : conversation,
+              ),
+            );
+          },
+          onDone: ({ userMessage, assistantMessage }) => {
+            setConversations((currentConversations) => {
+              const currentConversation =
+                currentConversations.find(
+                  (conversation) => conversation.id === targetConversationId,
+                ) ?? createdConversation;
+
+              if (!currentConversation) {
+                return currentConversations;
+              }
+
+              const nextConversation = mergeMessagesIntoConversation(
+                removeMessagesFromConversation(
+                  currentConversation,
+                  [
+                    optimisticMessageId,
+                    streamingAssistantMessageId,
+                    userMessage.id,
+                    assistantMessage.id,
+                  ].filter((messageId): messageId is string => Boolean(messageId)),
+                ),
+                [userMessage, assistantMessage],
+              );
+
+              return upsertConversation(currentConversations, nextConversation, true);
+            });
+          },
+        },
+      );
 
       clearComposerState();
       clearSearch();

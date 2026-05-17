@@ -31,9 +31,16 @@ function MessageContent({ message }: { message: ChatMessage }) {
     return <p className="message-bubble__plain-text">{message.content}</p>;
   }
 
+  if (message.status === "streaming" && !message.content) {
+    return <div className="message-bubble__streaming-cursor" aria-label="正在生成回复" />;
+  }
+
   return (
     <div className="message-bubble__markdown">
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+      {message.status === "streaming" && (
+        <span className="message-bubble__inline-cursor" aria-hidden="true" />
+      )}
     </div>
   );
 }
