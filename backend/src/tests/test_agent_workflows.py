@@ -336,6 +336,62 @@ class AgentWorkflowTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_memory_update_workflow_updates_existing_memory_when_explicit(self) -> None:
+        db = self.SessionLocal()
+        original_memory = MemoryItem(
+            public_id="mem_existing",
+            user_public_id="user_test",
+            conversation_public_id="conv_old",
+            source_message_public_id="msg_old",
+            memory_type="taste_preference",
+            content="用户喜欢清淡口味",
+            confidence="0.80",
+            extra_metadata={"extractor": "test"},
+        )
+        db.add(original_memory)
+        db.commit()
+        context = self._context("更新我的口味偏好：现在喜欢酸甜口")
+
+        class _FakeStructuredModel:
+            def invoke(self, messages):
+                _ = messages
+                return MemoryExtractionResult(
+                    memories=[
+                        MemoryExtractionItem(
+                            memory_type="taste_preference",
+                            content="用户喜欢酸甜口",
+                            confidence=0.91,
+                        )
+                    ]
+                )
+
+        class _FakeModel:
+            def with_structured_output(self, schema):
+                self.schema = schema
+                return _FakeStructuredModel()
+
+        try:
+            with patch(
+                "agent.workflows.memory_update_workflow.build_chat_model",
+                return_value=_FakeModel(),
+            ):
+                result = MemoryUpdateWorkflow(db).run(context, self._intent(context))
+
+            memories = db.query(MemoryItem).all()
+            self.assertEqual(len(memories), 1)
+            self.assertEqual(memories[0].public_id, "mem_existing")
+            self.assertEqual(memories[0].content, "用户喜欢酸甜口")
+            self.assertEqual(memories[0].confidence, "0.91")
+            self.assertEqual(memories[0].extra_metadata["last_operation"], "update")
+            self.assertEqual(
+                memories[0].extra_metadata["update_history"][0]["content"],
+                "用户喜欢清淡口味",
+            )
+            self.assertEqual(len(result.output_snapshot["updated_memories"]), 1)
+            self.assertEqual(result.output_snapshot["created_memories"], [])
+        finally:
+            db.close()
+
     def test_conversation_summary_service_updates_with_model(self) -> None:
         db = self.SessionLocal()
         conversation = self._create_conversation_with_messages(db, count=4)

@@ -26,6 +26,25 @@ class MemoryRepository:
         )
         return self.db.scalar(stmt)
 
+    def find_latest_by_type(
+        self,
+        *,
+        user_public_id: str,
+        memory_type: str,
+    ) -> MemoryItem | None:
+        """Return the latest memory of one type for explicit update commands."""
+
+        stmt = (
+            select(MemoryItem)
+            .where(
+                MemoryItem.user_public_id == user_public_id,
+                MemoryItem.memory_type == memory_type,
+            )
+            .order_by(MemoryItem.updated_at.desc(), MemoryItem.created_at.desc())
+            .limit(1)
+        )
+        return self.db.scalar(stmt)
+
     def create(self, memory_item: MemoryItem) -> MemoryItem:
         self.db.add(memory_item)
         self.db.flush()

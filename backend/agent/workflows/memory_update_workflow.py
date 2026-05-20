@@ -55,7 +55,9 @@ class MemoryUpdateWorkflow:
     def run(self, context: AgentTurnContext, intent: ActionIntent) -> AgentTurnResult:
         memories = self._extract_memories(context.user_message_text)
         created_items: list[dict] = []
+        updated_items: list[dict] = []
         duplicate_items: list[dict] = []
+        is_update_request = _looks_like_memory_update_request(context.user_message_text)
 
         for memory in memories:
             duplicate = self.memory_repository.find_duplicate(
@@ -66,6 +68,17 @@ class MemoryUpdateWorkflow:
             if duplicate is not None:
                 duplicate_items.append(self._to_snapshot(duplicate))
                 continue
+
+            if is_update_request:
+                update_target = self.memory_repository.find_latest_by_type(
+                    user_public_id=context.user_public_id,
+                    memory_type=memory.memory_type,
+                )
+                if update_target is not None:
+                    updated_items.append(
+                        self._update_memory_item(update_target, memory, context)
+                    )
+                    continue
 
             item = MemoryItem(
                 public_id=generate_public_id("mem"),
@@ -82,7 +95,11 @@ class MemoryUpdateWorkflow:
 
         self.db.commit()
 
-        if created_items:
+        if updated_items and created_items:
+            reply_text = f"已更新 {len(updated_items)} 条偏好，并新记录 {len(created_items)} 条偏好，后续推荐会优先参考。"
+        elif updated_items:
+            reply_text = f"已更新 {len(updated_items)} 条偏好，后续推荐会优先参考。"
+        elif created_items:
             reply_text = f"已记住 {len(created_items)} 条偏好，后续推荐会优先参考。"
         elif duplicate_items:
             reply_text = "这条偏好之前已经记录过了，后续会继续参考。"
@@ -97,6 +114,7 @@ class MemoryUpdateWorkflow:
                 "reply_type": "workflow_notice",
                 "workflow_name": self.name,
                 "created_memories": created_items,
+                "updated_memories": updated_items,
                 "duplicate_memories": duplicate_items,
                 "intent": {
                     "type": intent.intent_type,
@@ -106,6 +124,31 @@ class MemoryUpdateWorkflow:
                 },
             },
         )
+
+    def _update_memory_item(
+        self,
+        item: MemoryItem,
+        memory: ExtractedMemory,
+        context: AgentTurnContext,
+    ) -> dict:
+        """更新已有记忆，并在 metadata 中保留最近几次旧值，方便后续排查误更新。"""
+
+        previous_snapshot = self._to_snapshot(item)
+        previous_metadata = item.extra_metadata if isinstance(item.extra_metadata, dict) else {}
+        update_history = list(previous_metadata.get("update_history", []))
+        update_history.append(previous_snapshot)
+
+        item.content = memory.content
+        item.confidence = f"{memory.confidence:.2f}"
+        item.conversation_public_id = context.conversation_public_id
+        item.source_message_public_id = context.trigger_message_public_id
+        item.extra_metadata = {
+            **previous_metadata,
+            "extractor": memory.source,
+            "last_operation": "update",
+            "update_history": update_history[-5:],
+        }
+        return self._to_snapshot(item)
 
     def _extract_memories(self, text: str) -> list[ExtractedMemory]:
         normalized_text = " ".join((text or "").strip().split())
@@ -225,3 +268,38 @@ def _normalize_confidence(value: Any) -> float:
         return min(1.0, max(0.0, float(value)))
     except (TypeError, ValueError):
         return 0.8
+
+
+def _looks_like_memory_update_request(text: str) -> bool:
+    normalized_text = " ".join((text or "").strip().lower().split())
+    if not normalized_text:
+        return False
+
+    update_keywords = (
+        "更新",
+        "修改",
+        "改成",
+        "改为",
+        "换成",
+        "以后改",
+        "以后按",
+        "现在",
+        "从现在起",
+        "不再",
+        "不用再",
+        "update",
+        "change",
+    )
+    memory_keywords = (
+        "记忆",
+        "记住",
+        "偏好",
+        "口味",
+        "忌口",
+        "不吃",
+        "喜欢",
+        "remember",
+    )
+    return any(keyword in normalized_text for keyword in update_keywords) and any(
+        keyword in normalized_text for keyword in memory_keywords
+    )
