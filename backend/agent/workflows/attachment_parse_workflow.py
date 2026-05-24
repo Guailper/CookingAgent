@@ -43,7 +43,7 @@ class AttachmentParseWorkflow:
         elif failed_count == 0:
             reply_text = f"已完成 {completed_count} 个附件解析，解析文本已保存，可用于后续问答或入库。"
         elif completed_count == 0:
-            reply_text = "附件解析失败。当前仅支持 TXT、Markdown、CSV、JSON 等文本类附件。"
+            reply_text = "附件解析失败。当前仅支持 MinerU 可解析的 PDF、DOCX、PPTX、XLSX 和 JPG/PNG 图片。"
         else:
             reply_text = (
                 f"已完成 {completed_count} 个附件解析，另有 {failed_count} 个附件解析失败。"

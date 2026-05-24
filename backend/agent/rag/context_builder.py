@@ -131,6 +131,10 @@ def _chunk_to_snapshot(chunk: RetrievedChunk) -> dict:
         "page_no": chunk.page_no,
         "score": chunk.score,
         "chunk_public_id": chunk.metadata.get("chunk_public_id"),
+        "source_path": chunk.metadata.get("source_path"),
+        "section_title": chunk.metadata.get("section_title"),
+        "heading_path": chunk.metadata.get("heading_path"),
+        "document_format": chunk.metadata.get("document_format"),
     }
 
 

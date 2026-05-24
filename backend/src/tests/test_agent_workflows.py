@@ -156,7 +156,16 @@ class AgentWorkflowTests(unittest.TestCase):
 
     def _settings(self):
         return SimpleNamespace(
+            project_root=str(Path(self.tmp_dir.name)),
             upload_dir_path=Path(self.tmp_dir.name),
+            mineru_command="mineru",
+            mineru_output_dir_path=Path(self.tmp_dir.name) / "mineru",
+            mineru_backend="pipeline",
+            mineru_method="auto",
+            mineru_lang="ch",
+            mineru_api_url="",
+            mineru_parse_timeout_seconds=30,
+            mineru_extra_args=[],
             rag_default_knowledge_base_ids=["cookbook"],
             rag_chunk_target_size=700,
             rag_chunk_max_size=1000,
@@ -247,12 +256,26 @@ class AgentWorkflowTests(unittest.TestCase):
         self.assertEqual(memory.intent_type, "memory_update")
         self.assertEqual(answer.intent_type, "answer")
 
+    def _fake_mineru_run(self, markdown_text: str):
+        def run(command, **kwargs):
+            _ = kwargs
+            output_dir = Path(command[command.index("-o") + 1])
+            markdown_dir = output_dir / "auto"
+            markdown_dir.mkdir(parents=True, exist_ok=True)
+            (markdown_dir / "full.md").write_text(markdown_text, encoding="utf-8")
+            return SimpleNamespace(returncode=0, stdout="mineru ok", stderr="")
+
+        return run
+
     def test_attachment_parse_workflow_writes_parse_result(self) -> None:
         db = self.SessionLocal()
-        attachment = self._create_attachment(db, "note.txt", "番茄炒蛋需要先炒蛋。")
+        attachment = self._create_attachment(db, "note.pdf", "fake pdf bytes")
 
         try:
-            with patch("src.services.attachment_parse_service.get_settings", return_value=self._settings()):
+            with patch("src.services.attachment_parse_service.get_settings", return_value=self._settings()), patch(
+                "src.services.attachment_parse_service.subprocess.run",
+                side_effect=self._fake_mineru_run("番茄炒蛋需要先炒蛋。"),
+            ):
                 context = self._context("解析这个附件", [attachment.public_id])
                 result = AttachmentParseWorkflow(db).run(context, self._intent(context))
 
@@ -260,16 +283,21 @@ class AgentWorkflowTests(unittest.TestCase):
             self.assertEqual(result.workflow_name, "attachment_parse_workflow")
             self.assertIn("已完成 1 个附件解析", result.reply_text)
             self.assertIn("番茄炒蛋", parse_result.raw_text)
+            self.assertEqual(parse_result.parser_name, "mineru_cli")
+            self.assertEqual(parse_result.structured_result["parser_name"], "mineru_cli")
         finally:
             db.close()
 
-    def test_document_ingest_workflow_parses_and_indexes_text_attachment(self) -> None:
+    def test_document_ingest_workflow_parses_with_mineru_and_indexes_attachment(self) -> None:
         db = self.SessionLocal()
-        attachment = self._create_attachment(db, "cookbook.txt", "蛋炒饭适合用隔夜米饭。")
+        attachment = self._create_attachment(db, "cookbook.pdf", "fake pdf bytes")
         fake_indexing_service = SimpleNamespace(index_document=lambda document: 1)
 
         try:
-            with patch("src.services.attachment_parse_service.get_settings", return_value=self._settings()):
+            with patch("src.services.attachment_parse_service.get_settings", return_value=self._settings()), patch(
+                "src.services.attachment_parse_service.subprocess.run",
+                side_effect=self._fake_mineru_run("蛋炒饭适合用隔夜米饭。"),
+            ):
                 context = self._context("请把这个文件加入知识库", [attachment.public_id])
                 result = DocumentIngestWorkflow(
                     db,

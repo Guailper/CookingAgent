@@ -174,7 +174,7 @@ export function MessageComposer({
         className="composer__file-input"
         type="file"
         multiple
-        accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.jpg,.jpeg,.png,.webp"
+        accept=".pdf,.docx,.pptx,.xlsx,.jpg,.jpeg,.png"
         onChange={handleFileInputChange}
       />
 

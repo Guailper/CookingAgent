@@ -27,6 +27,7 @@ datasets>=2.20,<4.0
 
 # Multipart upload parsing
 python-multipart>=0.0.9,<1.0
+mineru[all]>=3.0,<4.0
 
 # Local speech-to-text fallback/replacement for external voice APIs
 faster-whisper>=1.1,<2.0

@@ -171,7 +171,7 @@ class FileService:
         raise AppException(
             400,
             "UNSUPPORTED_FILE_TYPE",
-            "当前仅支持 PDF、Office 文档、TXT、以及常见图片格式。",
+            "当前仅支持 MinerU 可解析的 PDF、DOCX、PPTX、XLSX、JPG、PNG 文件。",
         )
 
     def _cleanup_paths(self, paths: list[Path]) -> None:

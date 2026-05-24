@@ -115,7 +115,12 @@ class DocumentIngestWorkflow:
     ) -> None:
         """入库依赖解析文本；未解析附件先尝试本地解析一次。"""
 
-        if attachment.parse_result and attachment.parse_result.raw_text:
+        parse_result = attachment.parse_result
+        if (
+            parse_result
+            and parse_result.raw_text
+            and parse_result.parser_name == self.parse_service.PARSER_NAME
+        ):
             return
 
         outcome = self.parse_service.parse_attachment(attachment)

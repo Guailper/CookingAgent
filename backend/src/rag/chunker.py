@@ -15,6 +15,18 @@ class TextChunk:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class _ParagraphBlock:
+    content: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class _MergedChunk:
+    content: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
 class TextChunker:
     """Split long Chinese-first documents with semantic boundaries when possible."""
 
@@ -35,16 +47,16 @@ class TextChunker:
         if not cleaned_text:
             return []
 
-        base_metadata = metadata or {}
-        paragraphs = self._split_paragraphs(cleaned_text)
-        chunks = self._merge_paragraphs(paragraphs)
+        base_metadata = dict(metadata or {})
+        paragraph_blocks = self._split_paragraph_blocks(cleaned_text)
+        chunks = self._merge_blocks(paragraph_blocks)
 
         return [
             TextChunk(
-                content=chunk,
+                content=chunk.content,
                 chunk_index=index,
                 page_no=self._coerce_page_no(base_metadata.get("page_no")),
-                metadata=dict(base_metadata),
+                metadata={**base_metadata, **chunk.metadata},
             )
             for index, chunk in enumerate(chunks)
         ]
@@ -57,20 +69,42 @@ class TextChunker:
         normalized = re.sub(r"\n{3,}", "\n\n", normalized)
         return normalized.strip()
 
-    def _split_paragraphs(self, text: str) -> list[str]:
-        """Prefer natural paragraph boundaries, then sentence boundaries."""
+    def _split_paragraph_blocks(self, text: str) -> list[_ParagraphBlock]:
+        """Prefer natural paragraph boundaries while tracking Markdown sections."""
 
         paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
-        refined: list[str] = []
+        refined: list[_ParagraphBlock] = []
+        heading_stack: list[str] = []
 
         for paragraph in paragraphs:
-            if len(paragraph) <= self.max_size:
-                refined.append(paragraph)
-                continue
+            heading = self._extract_markdown_heading(paragraph)
+            if heading is not None:
+                level, title = heading
+                heading_stack = heading_stack[: max(0, level - 1)]
+                heading_stack.append(title)
 
-            refined.extend(self._split_long_paragraph(paragraph))
+            metadata = self._build_heading_metadata(heading_stack)
+            pieces = [paragraph] if len(paragraph) <= self.max_size else self._split_long_paragraph(paragraph)
+            refined.extend(_ParagraphBlock(content=piece, metadata=metadata) for piece in pieces)
 
         return refined
+
+    def _extract_markdown_heading(self, paragraph: str) -> tuple[int, str] | None:
+        first_line = paragraph.splitlines()[0].strip()
+        match = re.match(r"^(#{1,6})\s+(.+?)\s*$", first_line)
+        if not match:
+            return None
+
+        return len(match.group(1)), match.group(2).strip()
+
+    def _build_heading_metadata(self, heading_stack: list[str]) -> dict[str, Any]:
+        if not heading_stack:
+            return {}
+
+        return {
+            "section_title": heading_stack[-1],
+            "heading_path": " > ".join(heading_stack),
+        }
 
     def _split_long_paragraph(self, paragraph: str) -> list[str]:
         """Split oversized paragraphs by sentence punctuation with a hard fallback."""
@@ -113,45 +147,71 @@ class TextChunker:
             if text[start : start + self.max_size].strip()
         ]
 
-    def _merge_paragraphs(self, paragraphs: list[str]) -> list[str]:
-        """Merge paragraphs into target-sized chunks with small overlaps."""
+    def _merge_blocks(self, blocks: list[_ParagraphBlock]) -> list[_MergedChunk]:
+        """Merge paragraph blocks into target-sized chunks with small overlaps."""
 
-        chunks: list[str] = []
-        current_parts: list[str] = []
+        chunks: list[_MergedChunk] = []
+        current_blocks: list[_ParagraphBlock] = []
         current_length = 0
 
-        for paragraph in paragraphs:
-            separator_length = 2 if current_parts else 0
-            candidate_length = current_length + separator_length + len(paragraph)
+        for block in blocks:
+            separator_length = 2 if current_blocks else 0
+            candidate_length = current_length + separator_length + len(block.content)
 
-            if current_parts and candidate_length > self.target_size:
-                current_chunk = "\n\n".join(current_parts).strip()
+            if current_blocks and candidate_length > self.target_size:
+                current_chunk = self._build_merged_chunk(current_blocks)
                 chunks.append(current_chunk)
-                current_parts = self._build_overlap_parts(current_chunk)
-                current_length = sum(len(part) for part in current_parts) + max(0, len(current_parts) - 1) * 2
+                current_blocks = self._build_overlap_blocks(current_chunk)
+                current_length = self._blocks_length(current_blocks)
 
-            current_parts.append(paragraph)
-            current_length += (2 if current_length else 0) + len(paragraph)
+            current_blocks.append(block)
+            current_length += (2 if current_length else 0) + len(block.content)
 
             if current_length >= self.max_size:
-                current_chunk = "\n\n".join(current_parts).strip()
+                current_chunk = self._build_merged_chunk(current_blocks)
                 chunks.append(current_chunk)
-                current_parts = self._build_overlap_parts(current_chunk)
-                current_length = sum(len(part) for part in current_parts) + max(0, len(current_parts) - 1) * 2
+                current_blocks = self._build_overlap_blocks(current_chunk)
+                current_length = self._blocks_length(current_blocks)
 
-        if current_parts:
-            chunks.append("\n\n".join(current_parts).strip())
+        if current_blocks:
+            chunks.append(self._build_merged_chunk(current_blocks))
 
-        return [chunk for chunk in chunks if chunk]
+        return [chunk for chunk in chunks if chunk.content]
 
-    def _build_overlap_parts(self, previous_chunk: str) -> list[str]:
+    def _build_merged_chunk(self, blocks: list[_ParagraphBlock]) -> _MergedChunk:
+        content = "\n\n".join(block.content for block in blocks).strip()
+        return _MergedChunk(content=content, metadata=self._merge_block_metadata(blocks))
+
+    def _merge_block_metadata(self, blocks: list[_ParagraphBlock]) -> dict[str, Any]:
+        heading_paths: list[str] = []
+        section_titles: list[str] = []
+        for block in blocks:
+            heading_path = block.metadata.get("heading_path")
+            section_title = block.metadata.get("section_title")
+            if heading_path and heading_path not in heading_paths:
+                heading_paths.append(str(heading_path))
+            if section_title:
+                section_titles.append(str(section_title))
+
+        metadata: dict[str, Any] = {}
+        if section_titles:
+            metadata["section_title"] = section_titles[-1]
+        if heading_paths:
+            metadata["heading_path"] = heading_paths[-1]
+            metadata["heading_paths"] = heading_paths
+        return metadata
+
+    def _build_overlap_blocks(self, previous_chunk: _MergedChunk) -> list[_ParagraphBlock]:
         """Carry a short suffix forward to improve recall near chunk borders."""
 
         if self.overlap_size <= 0:
             return []
 
-        overlap = previous_chunk[-self.overlap_size :].strip()
-        return [overlap] if overlap else []
+        overlap = previous_chunk.content[-self.overlap_size :].strip()
+        return [_ParagraphBlock(overlap, previous_chunk.metadata)] if overlap else []
+
+    def _blocks_length(self, blocks: list[_ParagraphBlock]) -> int:
+        return sum(len(block.content) for block in blocks) + max(0, len(blocks) - 1) * 2
 
     def _coerce_page_no(self, value: Any) -> int | None:
         if value is None:

@@ -1,12 +1,13 @@
-"""附件文本解析服务。
+"""附件解析服务。
 
-第一版优先实现确定性、可维护的本地解析：TXT/Markdown/CSV/JSON 直接读取文本；
-PDF、Office、图片等复杂格式先记录为不支持解析，避免伪造内容。
-后续可以在这里接入 OCR、PDF 解析器或 Office 文档解析器。
+文档入库前统一使用 MinerU 生成 Markdown 文本。这里不再保留本地文本直读逻辑，
+确保 PDF、Office 和图片等附件走同一套解析链路，便于后续统一定位解析失败。
 """
 
 from dataclasses import dataclass
 from pathlib import Path
+import subprocess
+from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
@@ -27,10 +28,27 @@ class AttachmentParseOutcome:
     error_message: str | None = None
 
 
-class AttachmentParseService:
-    """读取附件文件并把解析结果写入 parse_results。"""
+@dataclass(frozen=True)
+class MineruParseResult:
+    """MinerU 解析完成后的文本和可追踪元数据。"""
 
-    TEXT_EXTENSIONS = {".txt", ".md", ".markdown", ".csv", ".json"}
+    raw_text: str
+    structured_result: dict
+
+
+class AttachmentParseService:
+    """调用 MinerU 解析附件，并把 Markdown 结果写入 parse_results。"""
+
+    PARSER_NAME = "mineru_cli"
+    SUPPORTED_EXTENSIONS = {
+        ".pdf",
+        ".docx",
+        ".pptx",
+        ".xlsx",
+        ".jpg",
+        ".jpeg",
+        ".png",
+    }
 
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -44,14 +62,16 @@ class AttachmentParseService:
         """
 
         try:
-            raw_text = self._extract_text(attachment)
+            mineru_result = self._parse_with_mineru(attachment)
         except Exception as exc:
             attachment.parse_status = PARSE_STATUS_FAILED
             self._upsert_parse_result(
                 attachment=attachment,
                 parse_status=PARSE_STATUS_FAILED,
                 raw_text=None,
+                parser_name=self.PARSER_NAME,
                 structured_result={
+                    "parser_name": self.PARSER_NAME,
                     "error_message": str(exc),
                     "file_ext": attachment.file_ext,
                 },
@@ -68,48 +88,128 @@ class AttachmentParseService:
         self._upsert_parse_result(
             attachment=attachment,
             parse_status=PARSE_STATUS_COMPLETED,
-            raw_text=raw_text,
-            structured_result={
-                "file_ext": attachment.file_ext,
-                "text_length": len(raw_text),
-            },
+            raw_text=mineru_result.raw_text,
+            parser_name=self.PARSER_NAME,
+            structured_result=mineru_result.structured_result,
         )
         return AttachmentParseOutcome(
             attachment_public_id=attachment.public_id,
             file_name=attachment.original_name,
             status=PARSE_STATUS_COMPLETED,
-            text_length=len(raw_text),
+            text_length=len(mineru_result.raw_text),
         )
 
-    def _extract_text(self, attachment: Attachment) -> str:
+    def _parse_with_mineru(self, attachment: Attachment) -> MineruParseResult:
         file_path = self.settings.upload_dir_path / attachment.storage_path
         if not file_path.exists():
             raise FileNotFoundError(f"附件文件不存在：{file_path}")
 
         file_ext = (attachment.file_ext or "").lower()
-        if file_ext not in self.TEXT_EXTENSIONS:
+        if file_ext not in self.SUPPORTED_EXTENSIONS:
             raise ValueError(
-                f"当前仅支持直接解析文本类附件，暂不支持 {file_ext or '未知扩展名'}。"
+                "当前仅支持 MinerU 可解析的 PDF、DOCX、PPTX、XLSX 和 JPG/PNG 图片附件。"
             )
 
-        return self._read_text_file(file_path)
+        output_dir = self._new_output_dir(attachment)
+        completed_process = self._run_mineru(file_path, output_dir)
+        markdown_path = self._find_markdown_file(output_dir, file_path.stem)
+        raw_text = markdown_path.read_text(encoding="utf-8").strip()
+        if not raw_text:
+            raise ValueError("MinerU 已完成解析，但生成的 Markdown 文本为空。")
 
-    @staticmethod
-    def _read_text_file(file_path: Path) -> str:
-        file_bytes = file_path.read_bytes()
-        for encoding in ("utf-8-sig", "utf-8", "gb18030"):
-            try:
-                text = file_bytes.decode(encoding)
-                break
-            except UnicodeDecodeError:
-                continue
-        else:
-            raise ValueError("无法识别文本文件编码。")
+        return MineruParseResult(
+            raw_text=raw_text,
+            structured_result={
+                "parser_name": self.PARSER_NAME,
+                "file_ext": attachment.file_ext,
+                "text_length": len(raw_text),
+                "mineru_output_dir": self._display_path(output_dir),
+                "mineru_markdown_path": self._display_path(markdown_path),
+                "mineru_backend": self.settings.mineru_backend,
+                "mineru_method": self.settings.mineru_method,
+                "mineru_lang": self.settings.mineru_lang,
+                "mineru_api_url": self.settings.mineru_api_url or None,
+                "mineru_stdout": self._truncate_process_text(completed_process.stdout),
+            },
+        )
 
-        normalized_text = text.strip()
-        if not normalized_text:
-            raise ValueError("附件文本为空，无法解析。")
-        return normalized_text
+    def _new_output_dir(self, attachment: Attachment) -> Path:
+        output_dir = (
+            self.settings.mineru_output_dir_path
+            / attachment.public_id
+            / f"parse_{uuid4().hex}"
+        )
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return output_dir
+
+    def _run_mineru(self, file_path: Path, output_dir: Path) -> subprocess.CompletedProcess[str]:
+        command = self._build_mineru_command(file_path, output_dir)
+
+        try:
+            completed_process = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=self.settings.mineru_parse_timeout_seconds,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                f"未找到 MinerU 命令：{self.settings.mineru_command}。请安装 MinerU 或配置 MINERU_COMMAND。"
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"MinerU 解析超时，已超过 {self.settings.mineru_parse_timeout_seconds} 秒。"
+            ) from exc
+
+        if completed_process.returncode != 0:
+            stderr = self._truncate_process_text(completed_process.stderr)
+            stdout = self._truncate_process_text(completed_process.stdout)
+            raise RuntimeError(
+                f"MinerU 解析失败，退出码 {completed_process.returncode}。stderr={stderr} stdout={stdout}"
+            )
+
+        return completed_process
+
+    def _build_mineru_command(self, file_path: Path, output_dir: Path) -> list[str]:
+        command = [
+            self.settings.mineru_command,
+            "-p",
+            str(file_path),
+            "-o",
+            str(output_dir),
+        ]
+
+        if self.settings.mineru_backend:
+            command.extend(["-b", self.settings.mineru_backend])
+        if self.settings.mineru_method:
+            command.extend(["-m", self.settings.mineru_method])
+        if self.settings.mineru_lang:
+            command.extend(["-l", self.settings.mineru_lang])
+        if self.settings.mineru_api_url:
+            command.extend(["--api-url", self.settings.mineru_api_url])
+
+        # 预留给 MinerU 新版本或部署侧的额外参数，例如并发、设备或模型源。
+        command.extend(self.settings.mineru_extra_args)
+        return command
+
+    def _find_markdown_file(self, output_dir: Path, source_stem: str) -> Path:
+        markdown_files = [path for path in output_dir.rglob("*.md") if path.is_file()]
+        if not markdown_files:
+            raise FileNotFoundError(f"MinerU 没有在输出目录中生成 Markdown：{output_dir}")
+
+        preferred_names = {
+            f"{source_stem}.md".lower(),
+            "full.md",
+            "middle.md",
+        }
+        for path in markdown_files:
+            if path.name.lower() in preferred_names:
+                return path
+
+        return max(markdown_files, key=lambda path: path.stat().st_size)
 
     def _upsert_parse_result(
         self,
@@ -117,13 +217,14 @@ class AttachmentParseService:
         attachment: Attachment,
         parse_status: str,
         raw_text: str | None,
+        parser_name: str,
         structured_result: dict,
     ) -> ParseResult:
         parse_result = attachment.parse_result
         if parse_result is None:
             parse_result = ParseResult(
                 attachment_id=attachment.id,
-                parser_name="local_text_parser",
+                parser_name=parser_name,
                 parse_status=parse_status,
                 raw_text=raw_text,
                 structured_result=structured_result,
@@ -135,9 +236,24 @@ class AttachmentParseService:
             attachment.parse_result = parse_result
             return parse_result
 
-        parse_result.parser_name = "local_text_parser"
+        parse_result.parser_name = parser_name
         parse_result.parse_status = parse_status
         parse_result.raw_text = raw_text
         parse_result.structured_result = structured_result
         self.db.flush()
         return parse_result
+
+    def _display_path(self, path: Path) -> str:
+        resolved_path = path.resolve()
+        project_root = Path(self.settings.project_root).resolve()
+        try:
+            return str(resolved_path.relative_to(project_root))
+        except ValueError:
+            return str(resolved_path)
+
+    @staticmethod
+    def _truncate_process_text(text: str | None, max_length: int = 2000) -> str:
+        normalized_text = (text or "").strip()
+        if len(normalized_text) <= max_length:
+            return normalized_text
+        return f"{normalized_text[:max_length]}..."

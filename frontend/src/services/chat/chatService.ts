@@ -38,15 +38,12 @@ const DEFAULT_VOICE_UPLOAD_FILENAME = "voice-input.webm";
 
 const SUPPORTED_ATTACHMENT_EXTENSIONS = new Set([
   ".pdf",
-  ".doc",
   ".docx",
-  ".ppt",
   ".pptx",
-  ".txt",
+  ".xlsx",
   ".jpg",
   ".jpeg",
   ".png",
-  ".webp",
 ]);
 
 const VOICE_UPLOAD_EXTENSION_BY_MIME_TYPE: Array<[string, string]> = [
@@ -414,7 +411,7 @@ export function formatAttachmentSize(size: number) {
 export function resolveLocalAttachmentKind(file: File): ChatAttachmentKind {
   const extension = getFileExtension(file.name);
 
-  if ([".jpg", ".jpeg", ".png", ".webp"].includes(extension) || file.type.startsWith("image/")) {
+  if ([".jpg", ".jpeg", ".png"].includes(extension) || file.type.startsWith("image/")) {
     return "image";
   }
 
@@ -450,7 +447,7 @@ export function validateAttachmentSelection(files: File[], existingCount: number
       throw new ChatServiceError(
         "UNSUPPORTED_FILE_TYPE",
         "文件类型不支持",
-        "当前仅支持 PDF、Office 文档、TXT，以及常见图片格式。",
+        "当前仅支持 MinerU 可解析的 PDF、DOCX、PPTX、XLSX、JPG、PNG 文件。",
       );
     }
 

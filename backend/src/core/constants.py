@@ -56,18 +56,15 @@ DEFAULT_VOICE_REQUEST_TIMEOUT_SECONDS = 60
 
 ALLOWED_DOCUMENT_EXTENSIONS = (
     ".pdf",
-    ".doc",
     ".docx",
-    ".ppt",
     ".pptx",
-    ".txt",
+    ".xlsx",
 )
 
 ALLOWED_IMAGE_EXTENSIONS = (
     ".jpg",
     ".jpeg",
     ".png",
-    ".webp",
 )
 
 ALLOWED_AUDIO_EXTENSIONS = (

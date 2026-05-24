@@ -27,6 +27,7 @@ from src.core.constants import (
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 PROJECT_ROOT = BACKEND_ROOT.parent
 DEFAULT_UPLOAD_DIR = BACKEND_ROOT / "uploads"
+DEFAULT_MINERU_OUTPUT_DIR = DEFAULT_UPLOAD_DIR / "mineru"
 
 load_dotenv(PROJECT_ROOT / ".env")
 load_dotenv(BACKEND_ROOT / ".env", override=True)
@@ -402,6 +403,14 @@ class Settings:
     upload_dir: str
     max_upload_size_mb: int
     max_message_attachments: int
+    mineru_command: str
+    mineru_output_dir: str
+    mineru_backend: str
+    mineru_method: str
+    mineru_lang: str
+    mineru_api_url: str
+    mineru_parse_timeout_seconds: int
+    mineru_extra_args: list[str]
     max_audio_size_mb: int
     max_audio_duration_seconds: int
 
@@ -489,6 +498,12 @@ class Settings:
 
         return Path(self.upload_dir).expanduser().resolve()
 
+    @property
+    def mineru_output_dir_path(self) -> Path:
+        """把 MinerU 解析产物目录解析成绝对路径。"""
+
+        return Path(self.mineru_output_dir).expanduser().resolve()
+
 
 @lru_cache
 def get_settings() -> Settings:
@@ -560,6 +575,16 @@ def get_settings() -> Settings:
             "MAX_MESSAGE_ATTACHMENTS",
             DEFAULT_MAX_ATTACHMENT_FILES,
         ),
+        mineru_command=os.getenv("MINERU_COMMAND", "mineru").strip() or "mineru",
+        mineru_output_dir=_resolve_project_path(
+            os.getenv("MINERU_OUTPUT_DIR", str(DEFAULT_MINERU_OUTPUT_DIR)).strip()
+        ),
+        mineru_backend=os.getenv("MINERU_BACKEND", "pipeline").strip(),
+        mineru_method=os.getenv("MINERU_METHOD", "auto").strip(),
+        mineru_lang=os.getenv("MINERU_LANG", "ch").strip(),
+        mineru_api_url=os.getenv("MINERU_API_URL", "").strip(),
+        mineru_parse_timeout_seconds=_get_int_env("MINERU_PARSE_TIMEOUT_SECONDS", 1800),
+        mineru_extra_args=_get_csv_env("MINERU_EXTRA_ARGS", []),
         max_audio_size_mb=_get_int_env("MAX_AUDIO_SIZE_MB", DEFAULT_MAX_AUDIO_SIZE_MB),
         max_audio_duration_seconds=_get_int_env(
             "MAX_AUDIO_DURATION_SECONDS",

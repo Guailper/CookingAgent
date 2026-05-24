@@ -38,8 +38,6 @@ backend/uploads/
 backend/logs/
 backend/.*
 *.log
-backend/*.md
-!backend/mysql_schema.md
 backend/*.sql
 
 # IDE / OS
@@ -52,6 +50,9 @@ Thumbs.db
 # md
 *.md
 !README.md
+!docs/
+!docs/*.md
 models/*
 data/*
-.gitignore
+!data/recipes_multi_format/
+!data/recipes_multi_format/**

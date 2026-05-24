@@ -43,7 +43,7 @@ class RagRetriever:
 
         normalized_knowledge_base_ids = self._dedupe_ids(knowledge_base_public_ids)
         resolved_final_top_k = max(1, final_top_k or self.settings.rag_final_top_k)
-        resolved_vector_top_k = vector_top_k or self.settings.rag_vector_top_k
+        resolved_vector_top_k = max(resolved_final_top_k, vector_top_k or self.settings.rag_vector_top_k)
         cache_key = self._retrieve_cache_key(
             query=normalized_query,
             knowledge_base_public_ids=normalized_knowledge_base_ids,
@@ -61,6 +61,7 @@ class RagRetriever:
             top_k=resolved_vector_top_k,
             min_score=self.settings.rag_min_score,
         )
+        candidates = self._dedupe_candidates(candidates)
         if not candidates:
             return []
 
@@ -72,6 +73,39 @@ class RagRetriever:
             self.settings.rag_cache_ttl_seconds,
         )
         return chunks
+
+    def _dedupe_candidates(self, candidates: list[MilvusChunkRecord]) -> list[MilvusChunkRecord]:
+        """Remove repeated chunks before rerank while keeping the best vector hit."""
+
+        selected_by_key: dict[str, MilvusChunkRecord] = {}
+        ordered_keys: list[str] = []
+        for candidate in candidates:
+            if not candidate.content.strip():
+                continue
+
+            key = self._candidate_identity(candidate)
+            existing = selected_by_key.get(key)
+            if existing is None:
+                selected_by_key[key] = candidate
+                ordered_keys.append(key)
+                continue
+
+            if self._score_value(candidate.score) > self._score_value(existing.score):
+                selected_by_key[key] = candidate
+
+        return [selected_by_key[key] for key in ordered_keys]
+
+    def _candidate_identity(self, candidate: MilvusChunkRecord) -> str:
+        if candidate.chunk_public_id:
+            return f"chunk:{candidate.chunk_public_id}"
+        if candidate.document_public_id and candidate.chunk_index is not None:
+            return f"document_chunk:{candidate.document_public_id}:{candidate.chunk_index}"
+
+        digest = hashlib.sha256(candidate.content.strip().encode("utf-8")).hexdigest()
+        return f"content:{digest}"
+
+    def _score_value(self, score: float | None) -> float:
+        return float(score) if score is not None else float("-inf")
 
     def _rerank_or_keep_vector_order(
         self,
@@ -106,7 +140,11 @@ class RagRetriever:
                     page_no=candidate.page_no,
                     content=candidate.content,
                     score=result.score,
-                    metadata={**candidate.metadata, "vector_score": candidate.score},
+                    metadata={
+                        **candidate.metadata,
+                        "vector_score": candidate.score,
+                        "rerank_score": result.score,
+                    },
                 )
             )
             used_indexes.add(result.index)
@@ -163,6 +201,12 @@ class RagRetriever:
             "vector_top_k": vector_top_k,
             "min_score": self.settings.rag_min_score,
             "collection": self.settings.milvus_collection,
+            "embedding_provider": getattr(self.settings, "rag_embedding_provider", ""),
+            "embedding_model": getattr(self.settings, "rag_embedding_model", ""),
+            "embedding_model_path": getattr(self.settings, "rag_embedding_model_path", ""),
+            "rerank_provider": getattr(self.settings, "rag_rerank_provider", ""),
+            "rerank_model": getattr(self.settings, "rag_rerank_model", ""),
+            "rerank_model_path": getattr(self.settings, "rag_rerank_model_path", ""),
         }
         payload_text = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(payload_text.encode("utf-8")).hexdigest()

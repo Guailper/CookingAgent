@@ -16,6 +16,7 @@ CookingAgent 是一个面向做菜场景的中文 AI Agent 应用。它把菜谱
 ## Table of Contents
 
 - [Features](#features)
+- [Documentation](#documentation)
 - [Architecture](#architecture)
 - [Tech Stack](#tech-stack)
 - [Project Structure](#project-structure)
@@ -42,6 +43,11 @@ CookingAgent 是一个面向做菜场景的中文 AI Agent 应用。它把菜谱
 | Attachments and voice | Supports file upload, attachment parsing, document ingestion, and local speech-to-text fallback. |
 | Persistence | Stores users, conversations, messages, attachments, parse results, memories, summaries, and agent run snapshots. |
 | Frontend workspace | React + TypeScript chat UI with conversation history, message streaming, attachments, voice input, and settings. |
+
+## Documentation
+
+- [Requirements analysis](docs/requirements-analysis.md)
+- [Architecture design](docs/architecture-design.md)
 
 ## Architecture
 
@@ -81,7 +87,7 @@ Normal answer flow:
 | Frontend | React 18, TypeScript, Vite, React Markdown |
 | Backend | FastAPI, SQLAlchemy, Alembic, Pydantic, PyMySQL |
 | Agent | LangChain 1.x, LangChain Core, LangChain OpenAI adapter, Tool Calling |
-| RAG | Milvus, pymilvus, sentence-transformers, FlagEmbedding |
+| RAG and parsing | MinerU, Milvus, pymilvus, sentence-transformers, FlagEmbedding |
 | Memory | MySQL `memory_items`, LangChain structured output, prompt injection, memory search tool |
 | Voice | faster-whisper local transcription |
 | Cache | Optional Redis |
@@ -186,12 +192,13 @@ All supported environment variables are documented in [example.env](example.env)
 | App and database | `APP_SECRET_KEY`, `AUTO_CREATE_TABLES`, `MYSQL_*` |
 | Agent model | `AGENT_MODEL_PROVIDER`, `AGENT_MODEL_FALLBACK_ORDER`, `KIMI_*`, `AIHUBMIX_*`, `LOCAL_MODEL_*` |
 | RAG and Milvus | `MILVUS_*`, `RAG_*` |
+| Document parsing | `MINERU_*` |
 | External tools | `SERPAPI_API_KEY`, `WEATHER_API_KEY` |
 | Voice and cache | `VOICE_*`, `REDIS_*` |
 
 ## RAG Knowledge Base
 
-Index local Markdown data into Milvus:
+Index local recipe data into Milvus:
 
 ```powershell
 conda activate cook-agent
@@ -201,6 +208,8 @@ python scripts/index_data_to_milvus.py --data-dir ..\data --knowledge-base-id co
 
 Notes:
 
+- The local indexer supports `.md`, `.markdown`, `.txt`, `.json`, `.jsonl`, and `.csv`.
+- Multi-format sample recipe files are available under `data/recipes_multi_format`.
 - Use `--rebuild` only when you want to drop and recreate the configured Milvus collection.
 - Changing `RAG_EMBEDDING_MODEL_PATH` or vector dimension requires rebuilding the collection.
 - The current long-term user memory feature does not use the vector database; it reads from MySQL and is injected into the LangChain agent context.
