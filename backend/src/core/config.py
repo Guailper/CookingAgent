@@ -343,6 +343,18 @@ def _get_json_object_env(name: str) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _get_intent_weight_pair() -> tuple[float, float]:
+    """读取并校验意图识别融合权重。"""
+
+    rule_weight = _get_float_env("INTENT_RULE_WEIGHT", 0.6)
+    model_weight = _get_float_env("INTENT_MODEL_WEIGHT", 0.4)
+    if rule_weight < 0 or model_weight < 0:
+        raise ValueError("INTENT_RULE_WEIGHT 和 INTENT_MODEL_WEIGHT 不能为负数。")
+    if abs((rule_weight + model_weight) - 1.0) > 1e-6:
+        raise ValueError("INTENT_RULE_WEIGHT 和 INTENT_MODEL_WEIGHT 之和必须为 1。")
+    return rule_weight, model_weight
+
+
 @dataclass(frozen=True)
 class AgentModelCandidate:
     """One OpenAI-compatible chat model endpoint in the fallback chain."""
@@ -434,6 +446,16 @@ class Settings:
     agent_disable_reasoning: bool
     agent_model_candidates: list[AgentModelCandidate]
     agent_mcp_servers: dict[str, dict[str, Any]]
+    intent_rule_weight: float
+    intent_model_weight: float
+    intent_model_provider: str
+    intent_model_base_url: str
+    intent_model_api_key: str
+    intent_model_name: str
+    content_validation_model_provider: str
+    content_validation_model_base_url: str
+    content_validation_model_api_key: str
+    content_validation_model_name: str
     weather_api_key: str
     weather_api_base_url: str
     weather_geo_base_url: str
@@ -462,6 +484,10 @@ class Settings:
     rag_vector_top_k: int
     rag_final_top_k: int
     rag_min_score: float
+    rag_hybrid_search_enabled: bool
+    rag_keyword_top_k: int
+    rag_keyword_scan_limit: int
+    rag_rrf_k: int
     rag_query_rewrite_enabled: bool
     rag_query_rewrite_temperature: float
     rag_query_rewrite_max_chars: int
@@ -520,6 +546,7 @@ def get_settings() -> Settings:
     agent_base_url = _resolve_agent_model_base_url(agent_provider)
     agent_api_key = _resolve_agent_model_api_key(agent_provider)
     agent_model_name = _resolve_agent_model_name(agent_provider)
+    intent_rule_weight, intent_model_weight = _get_intent_weight_pair()
 
     return Settings(
         app_name=os.getenv("APP_NAME", APP_NAME),
@@ -623,6 +650,28 @@ def get_settings() -> Settings:
             primary_model_name=agent_model_name.strip(),
         ),
         agent_mcp_servers=_get_json_object_env("AGENT_MCP_SERVERS_JSON"),
+        intent_rule_weight=intent_rule_weight,
+        intent_model_weight=intent_model_weight,
+        intent_model_provider=os.getenv("INTENT_MODEL_PROVIDER", "disabled").strip().lower(),
+        intent_model_base_url=os.getenv("INTENT_MODEL_BASE_URL", "").strip(),
+        intent_model_api_key=os.getenv("INTENT_MODEL_API_KEY", "not-needed").strip(),
+        intent_model_name=os.getenv("INTENT_MODEL_NAME", "").strip(),
+        content_validation_model_provider=os.getenv(
+            "CONTENT_VALIDATION_MODEL_PROVIDER",
+            "disabled",
+        ).strip().lower(),
+        content_validation_model_base_url=os.getenv(
+            "CONTENT_VALIDATION_MODEL_BASE_URL",
+            "",
+        ).strip(),
+        content_validation_model_api_key=os.getenv(
+            "CONTENT_VALIDATION_MODEL_API_KEY",
+            "",
+        ).strip(),
+        content_validation_model_name=os.getenv(
+            "CONTENT_VALIDATION_MODEL_NAME",
+            "",
+        ).strip(),
         weather_api_key=(
             os.getenv("WEATHER_API_KEY")
             or ""
@@ -691,6 +740,10 @@ def get_settings() -> Settings:
         rag_vector_top_k=_get_int_env("RAG_VECTOR_TOP_K", 20),
         rag_final_top_k=_get_int_env("RAG_FINAL_TOP_K", 5),
         rag_min_score=_get_float_env("RAG_MIN_SCORE", 0.25),
+        rag_hybrid_search_enabled=_get_bool_env("RAG_HYBRID_SEARCH_ENABLED", True),
+        rag_keyword_top_k=_get_int_env("RAG_KEYWORD_TOP_K", 20),
+        rag_keyword_scan_limit=_get_int_env("RAG_KEYWORD_SCAN_LIMIT", 5000),
+        rag_rrf_k=_get_int_env("RAG_RRF_K", 60),
         rag_query_rewrite_enabled=_get_bool_env("RAG_QUERY_REWRITE_ENABLED", True),
         rag_query_rewrite_temperature=_get_float_env("RAG_QUERY_REWRITE_TEMPERATURE", 0.6),
         rag_query_rewrite_max_chars=_get_int_env("RAG_QUERY_REWRITE_MAX_CHARS", 180),

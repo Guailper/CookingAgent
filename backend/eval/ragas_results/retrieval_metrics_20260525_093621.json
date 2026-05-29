@@ -1,0 +1,21 @@
+{
+  "summary": {
+    "case_count": 1,
+    "hit_at_k": 1.0,
+    "recall_at_k": 1.0,
+    "mrr": 1.0
+  },
+  "cases": [
+    {
+      "user_input": "蛋炒饭为什么推荐使用隔夜冷饭？如果没有冷饭应该怎么处理？",
+      "expected_source_paths": [
+        "data/cook/dishes/staple/蛋炒饭.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    }
+  ]
+}

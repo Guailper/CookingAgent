@@ -20,6 +20,7 @@ import {
   listRemoteConversations,
   mergeMessagesIntoConversation,
   removeRemoteAttachment,
+  retryRemoteAttachmentIngestion,
   searchWorkspaceContent,
   sendAgentMessageStream,
   transcribeVoiceToText,
@@ -80,6 +81,7 @@ function createOptimisticUserMessage(
       size: attachment.size,
       kind: attachment.kind,
       parseStatus: attachment.status,
+      embeddingStatus: "pending",
     })),
     extraMetadata: { optimistic: true },
   };
@@ -186,6 +188,7 @@ export function useWorkspace({ user, onUnauthorized }: UseWorkspaceOptions) {
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [isUploadingAttachments, setIsUploadingAttachments] = useState(false);
+  const [retryingAttachmentId, setRetryingAttachmentId] = useState<string | null>(null);
 
   const settingsMenuItems = createSettingsMenuItems();
   const promptSuggestions = createPromptSuggestions();
@@ -409,6 +412,37 @@ export function useWorkspace({ user, onUnauthorized }: UseWorkspaceOptions) {
         error instanceof ChatServiceError ? error.description : "语音转写失败，请稍后重试。",
       );
       setWorkspaceNotice(toWorkspaceNotice(error));
+    }
+  }
+
+  async function retryAttachmentIngestion(attachmentId: string) {
+    if (!activeConversationId || retryingAttachmentId) {
+      return;
+    }
+
+    setRetryingAttachmentId(attachmentId);
+    setWorkspaceNotice(null);
+
+    try {
+      const result = await retryRemoteAttachmentIngestion(attachmentId);
+      const refreshedConversation = await getRemoteConversation(activeConversationId);
+      setConversations((currentConversations) =>
+        upsertConversation(currentConversations, refreshedConversation),
+      );
+      setWorkspaceNotice({
+        tone: result.attachment.embeddingStatus === "completed" ? "success" : "error",
+        title: result.attachment.embeddingStatus === "completed" ? "入库成功" : "入库未完成",
+        description: result.message,
+      });
+    } catch (error) {
+      if (isChatSessionError(error)) {
+        onUnauthorized?.();
+        return;
+      }
+
+      setWorkspaceNotice(toWorkspaceNotice(error));
+    } finally {
+      setRetryingAttachmentId(null);
     }
   }
 
@@ -666,6 +700,7 @@ export function useWorkspace({ user, onUnauthorized }: UseWorkspaceOptions) {
     isLoadingConversations,
     isSendingMessage,
     isUploadingAttachments,
+    retryingAttachmentId,
     voiceComposerState,
     voiceError,
     toggleSidebar,
@@ -686,6 +721,7 @@ export function useWorkspace({ user, onUnauthorized }: UseWorkspaceOptions) {
     handleVoiceRecordingChange,
     handleVoiceCaptureError,
     transcribeRecordedAudio,
+    retryAttachmentIngestion,
     sendMessage,
     usePromptSuggestion,
     selectSearchResult,

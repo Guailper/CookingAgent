@@ -3,7 +3,7 @@
 from collections.abc import Iterable
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from src.db.models.attachment import Attachment
 
@@ -25,6 +25,16 @@ class AttachmentRepository:
         """Fetch a single attachment by its public business identifier."""
 
         stmt = select(Attachment).where(Attachment.public_id == public_id)
+        return self.db.scalar(stmt)
+
+    def get_by_public_id_with_parse_result(self, public_id: str) -> Attachment | None:
+        """Fetch one attachment with processing status ready for serialization."""
+
+        stmt = (
+            select(Attachment)
+            .options(joinedload(Attachment.parse_result))
+            .where(Attachment.public_id == public_id)
+        )
         return self.db.scalar(stmt)
 
     def list_by_public_ids_and_conversation_id(

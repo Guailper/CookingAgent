@@ -1030,6 +1030,23 @@
   opacity: 0.82;
 }
 
+.message-bubble__attachment-retry {
+  justify-self: start;
+  margin-top: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.48);
+  border-radius: 999px;
+  padding: 5px 12px;
+  background: rgba(255, 255, 255, 0.14);
+  color: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.message-bubble__attachment-retry:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
 .message-bubble time {
   flex: 0 0 auto;
   font-size: 0.78rem;

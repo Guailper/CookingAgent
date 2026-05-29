@@ -1,0 +1,340 @@
+{
+  "summary": {
+    "case_count": 30,
+    "hit_at_k": 1.0,
+    "recall_at_k": 1.0,
+    "mrr": 0.9333333333333333
+  },
+  "cases": [
+    {
+      "user_input": "蛋炒饭为什么推荐使用隔夜冷饭？如果没有冷饭应该怎么处理？",
+      "expected_source_paths": [
+        "data/cook/dishes/staple/蛋炒饭.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "user_input": "做一份蛋炒饭时，米饭、鸡蛋、油、盐、生抽大致应该按什么比例准备？",
+      "expected_source_paths": [
+        "data/cook/dishes/staple/蛋炒饭.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 0.5
+      }
+    },
+    {
+      "user_input": "西红柿炒鸡蛋里鸡蛋和西红柿分别应该怎么预处理？",
+      "expected_source_paths": [
+        "data/cook/dishes/vegetable_dish/西红柿炒鸡蛋.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "user_input": "西红柿炒鸡蛋怎样做可以增加汤汁？",
+      "expected_source_paths": [
+        "data/cook/dishes/vegetable_dish/西红柿炒鸡蛋.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 0.5
+      }
+    },
+    {
+      "user_input": "清蒸鲈鱼一份需要哪些主要调料和大致用量？",
+      "expected_source_paths": [
+        "data/cook/dishes/aquatic/清蒸鲈鱼/清蒸鲈鱼.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "user_input": "清蒸鲈鱼为什么要用筷子把鱼和盘子隔开？",
+      "expected_source_paths": [
+        "data/cook/dishes/aquatic/清蒸鲈鱼/清蒸鲈鱼.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "user_input": "清蒸鲈鱼大火蒸多久比较合适，时间过长或过短会怎样？",
+      "expected_source_paths": [
+        "data/cook/dishes/aquatic/清蒸鲈鱼/清蒸鲈鱼.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "user_input": "可乐鸡翅一盘大约需要多少鸡翅和可乐？还要哪些调味料？",
+      "expected_source_paths": [
+        "data/cook/dishes/meat_dish/可乐鸡翅.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "user_input": "可乐鸡翅最后收汁时为什么不能开太大火？",
+      "expected_source_paths": [
+        "data/cook/dishes/meat_dish/可乐鸡翅.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "user_input": "糖醋汁的经典 1:2:3:4:5 比例在这个菜谱里具体对应哪些调料？",
+      "expected_source_paths": [
+        "data/cook/dishes/condiment/糖醋汁.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "user_input": "糖醋汁倒入锅后通常要怎么处理才能让菜更有光泽和浓度？",
+      "expected_source_paths": [
+        "data/cook/dishes/condiment/糖醋汁.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "user_input": "烤蛋挞做整包蛋挞皮时，蛋挞液主要配方是什么？",
+      "expected_source_paths": [
+        "data/cook/dishes/dessert/烤蛋挞/烤蛋挞.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "user_input": "烤蛋挞为什么要过滤蛋挞液，烘烤温度和时间是多少？",
+      "expected_source_paths": [
+        "data/cook/dishes/dessert/烤蛋挞/烤蛋挞.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "user_input": "酸梅汤的头煎和二煎分别怎么做？",
+      "expected_source_paths": [
+        "data/cook/dishes/drink/酸梅汤/酸梅汤.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "user_input": "酸梅汤里干桂花应该什么时候放，为什么不能太热？",
+      "expected_source_paths": [
+        "data/cook/dishes/drink/酸梅汤/酸梅汤.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "user_input": "凉拌黄瓜做好后如果要冷藏，需要注意什么？",
+      "expected_source_paths": [
+        "data/cook/dishes/vegetable_dish/凉拌黄瓜.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 0.5
+      }
+    },
+    {
+      "user_input": "凉拌黄瓜的调味和腌制步骤是什么？",
+      "expected_source_paths": [
+        "data/cook/dishes/vegetable_dish/凉拌黄瓜.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "user_input": "完美水煮蛋的循环水煮法需要怎样转移鸡蛋，总时长多久？",
+      "expected_source_paths": [
+        "data/cook/dishes/breakfast/完美水煮蛋.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "user_input": "太阳蛋用可控火候微波炉怎么做？蛋黄为什么要戳孔？",
+      "expected_source_paths": [
+        "data/cook/dishes/breakfast/太阳蛋.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "user_input": "日式咖喱饭以半盒好侍咖喱块为例，需要哪些主料和多少份量？",
+      "expected_source_paths": [
+        "data/cook/dishes/staple/日式咖喱饭/日式咖喱饭.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "user_input": "日式咖喱饭为什么要关火后再加咖喱块，之后还要怎么煮？",
+      "expected_source_paths": [
+        "data/cook/dishes/staple/日式咖喱饭/日式咖喱饭.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "user_input": "水煮肉片怎样腌肉才能让肉片更滑嫩？",
+      "expected_source_paths": [
+        "data/cook/dishes/meat_dish/水煮肉片.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "user_input": "水煮肉片最后泼油前，碗里需要撒什么？油温大概到什么程度？",
+      "expected_source_paths": [
+        "data/cook/dishes/meat_dish/水煮肉片.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "user_input": "白灼虾不加水的做法里，虾应该怎么铺锅和加热？",
+      "expected_source_paths": [
+        "data/cook/dishes/aquatic/白灼虾/白灼虾.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "user_input": "白灼虾开始为什么不能用大火？蘸料怎么做？",
+      "expected_source_paths": [
+        "data/cook/dishes/aquatic/白灼虾/白灼虾.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "user_input": "电饭煲蒸米饭的指尖量水法对江南米和北方大米有什么区别？",
+      "expected_source_paths": [
+        "data/cook/dishes/staple/米饭/电饭煲蒸米饭.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "user_input": "电饭煲蒸米饭进入保温后为什么还要焖一会儿？具体焖多久？",
+      "expected_source_paths": [
+        "data/cook/dishes/staple/米饭/电饭煲蒸米饭.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "user_input": "手撕包菜为什么要先单独炒包菜，加盐的作用是什么？",
+      "expected_source_paths": [
+        "data/cook/dishes/vegetable_dish/手撕包菜/手撕包菜.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 0.5
+      }
+    },
+    {
+      "user_input": "戚风蛋糕做 6 寸和 8 寸时，鸡蛋、糖、油、牛奶、低筋面粉分别是多少？",
+      "expected_source_paths": [
+        "data/cook/dishes/dessert/戚风蛋糕/戚风蛋糕.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "user_input": "戚风蛋糕分离蛋清蛋黄时，容器和蛋清有什么关键要求？",
+      "expected_source_paths": [
+        "data/cook/dishes/dessert/戚风蛋糕/戚风蛋糕.md"
+      ],
+      "retrieval_metrics": {
+        "hit_at_k": 1.0,
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0
+      }
+    }
+  ]
+}

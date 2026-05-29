@@ -1,10 +1,19 @@
 """Attachment upload and cleanup endpoints for the chat workspace."""
 
+from agent.contracts import ActionIntent, AgentTurnContext
+from agent.workflows.document_ingest_workflow import DocumentIngestWorkflow
 from fastapi import APIRouter, Depends, File, UploadFile, status
 from sqlalchemy.orm import Session
 
 from src.api.deps import get_current_user, get_db_session
-from src.schemas.file import AttachmentDeleteResponse, AttachmentItem, AttachmentUploadResponse
+from src.schemas.file import (
+    AttachmentDeleteResponse,
+    AttachmentIngestRetryItem,
+    AttachmentIngestRetryRequest,
+    AttachmentIngestRetryResponse,
+    AttachmentItem,
+    AttachmentUploadResponse,
+)
 from src.services.file_service import FileService
 
 router = APIRouter()
@@ -52,3 +61,52 @@ async def delete_unbound_attachment(
         attachment_public_id=attachment_id,
     )
     return AttachmentDeleteResponse(message="附件删除成功。")
+
+
+@router.post(
+    "/attachments/{attachment_id}/ingest/retry",
+    response_model=AttachmentIngestRetryResponse,
+    summary="重试附件入库",
+)
+async def retry_attachment_ingestion(
+    attachment_id: str,
+    payload: AttachmentIngestRetryRequest | None = None,
+    db: Session = Depends(get_db_session),
+    current_user=Depends(get_current_user),
+) -> AttachmentIngestRetryResponse:
+    """Retry parsing/indexing for an existing attachment without uploading it again."""
+
+    file_service = FileService(db)
+    attachment, conversation = file_service.get_owned_attachment(current_user, attachment_id)
+    knowledge_base_ids = (
+        [payload.knowledge_base_id]
+        if payload is not None and payload.knowledge_base_id
+        else []
+    )
+    context = AgentTurnContext(
+        conversation_public_id=conversation.public_id,
+        user_public_id=current_user.public_id,
+        trigger_message_public_id=f"retry_{attachment.public_id}",
+        user_message_text="重试附件入库",
+        attachment_public_ids=[attachment.public_id],
+        knowledge_base_public_ids=knowledge_base_ids,
+    )
+    result = DocumentIngestWorkflow(db).run(
+        context,
+        ActionIntent(
+            intent_type="document_ingest",
+            confidence=1.0,
+            source="attachment_retry_api",
+            reason="用户明确重试已上传附件的入库处理。",
+        ),
+    )
+    refreshed_attachment, _ = file_service.get_owned_attachment(current_user, attachment_id)
+    snapshot = result.output_snapshot
+    return AttachmentIngestRetryResponse(
+        message=result.reply_text,
+        data=AttachmentIngestRetryItem(
+            attachment=AttachmentItem.model_validate(refreshed_attachment),
+            indexed_documents=snapshot.get("indexed_documents", []),
+            skipped_documents=snapshot.get("skipped_documents", []),
+        ),
+    )

@@ -40,7 +40,7 @@ CookingAgent 是一个面向做菜场景的中文 AI Agent 应用。它把菜谱
 | Long-term memory | Extracts user preferences with LangChain structured output, stores them in MySQL, injects them into prompts, and exposes a `search_user_memory` tool. |
 | Conversation context | Combines recent messages, rolling summaries, user memories, RAG context, web context, and attachment context for each turn. |
 | Web and weather tools | Uses SerpApi for web search and QWeather for weather-aware cooking suggestions. |
-| Attachments and voice | Supports file upload, attachment parsing, document ingestion, and local speech-to-text fallback. |
+| Attachments and voice | Supports file upload, small-model-gated cooking document ingestion, retrying failed ingestion without re-uploading, and local speech-to-text fallback. |
 | Persistence | Stores users, conversations, messages, attachments, parse results, memories, summaries, and agent run snapshots. |
 | Frontend workspace | React + TypeScript chat UI with conversation history, message streaming, attachments, voice input, and settings. |
 
@@ -48,6 +48,7 @@ CookingAgent 是一个面向做菜场景的中文 AI Agent 应用。它把菜谱
 
 - [Requirements analysis](docs/requirements-analysis.md)
 - [Architecture design](docs/architecture-design.md)
+- [Agent evaluation process](docs/agent-evaluation-process.md)
 
 ## Architecture
 
@@ -191,6 +192,7 @@ All supported environment variables are documented in [example.env](example.env)
 | --- | --- |
 | App and database | `APP_SECRET_KEY`, `AUTO_CREATE_TABLES`, `MYSQL_*` |
 | Agent model | `AGENT_MODEL_PROVIDER`, `AGENT_MODEL_FALLBACK_ORDER`, `KIMI_*`, `AIHUBMIX_*`, `LOCAL_MODEL_*` |
+| Content validation model | `CONTENT_VALIDATION_MODEL_PROVIDER`, `CONTENT_VALIDATION_MODEL_BASE_URL`, `CONTENT_VALIDATION_MODEL_API_KEY`, `CONTENT_VALIDATION_MODEL_NAME` |
 | RAG and Milvus | `MILVUS_*`, `RAG_*` |
 | Document parsing | `MINERU_*` |
 | External tools | `SERPAPI_API_KEY`, `WEATHER_API_KEY` |
@@ -212,6 +214,7 @@ Notes:
 - Multi-format sample recipe files are available under `data/recipes_multi_format`.
 - Use `--rebuild` only when you want to drop and recreate the configured Milvus collection.
 - Changing `RAG_EMBEDDING_MODEL_PATH` or vector dimension requires rebuilding the collection.
+- Uploaded documents are classified by the independently configured `CONTENT_VALIDATION_MODEL_*` small model before they can be indexed.
 - The current long-term user memory feature does not use the vector database; it reads from MySQL and is injected into the LangChain agent context.
 
 ## API Overview
@@ -223,6 +226,7 @@ Notes:
 | Messages | `/api/v1/conversations/{conversation_id}/messages` |
 | Agent chat | `/api/v1/agent/chat/stream` |
 | Attachments | `/api/v1/conversations/{conversation_id}/attachments` |
+| Attachment ingestion retry | `/api/v1/attachments/{attachment_id}/ingest/retry` |
 | Voice transcription | `/api/v1/voice/transcriptions` |
 
 OpenAPI documentation is available at `/docs` when the backend is running.
@@ -246,7 +250,7 @@ npm run build
 Current verified backend status:
 
 ```text
-63 passed
+91 passed
 ```
 
 ## Development Notes

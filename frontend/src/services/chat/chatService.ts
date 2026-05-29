@@ -7,6 +7,7 @@
 
 import type {
   ApiAgentChatDoneData,
+  ApiAttachmentIngestRetryResponse,
   ApiAttachmentItem,
   ApiAttachmentUploadResponse,
   ApiConversationDetailResponse,
@@ -178,6 +179,7 @@ function mapApiAttachment(item: ApiAttachmentItem): ChatAttachment {
     size: item.file_size,
     kind: item.attachment_kind,
     parseStatus: item.parse_status,
+    embeddingStatus: item.embedding_status,
   };
 }
 
@@ -562,6 +564,22 @@ export async function removeRemoteAttachment(attachmentId: string) {
     method: "DELETE",
     headers: getAuthorizationHeaders(),
   });
+}
+
+export async function retryRemoteAttachmentIngestion(attachmentId: string) {
+  const response = await requestJson<ApiAttachmentIngestRetryResponse>(
+    `/attachments/${attachmentId}/ingest/retry`,
+    {
+      method: "POST",
+      headers: getJsonAuthHeaders(),
+      body: JSON.stringify({}),
+    },
+  );
+
+  return {
+    message: response.message,
+    attachment: mapApiAttachment(response.data.attachment),
+  };
 }
 
 export async function transcribeVoiceToText(audioBlob: Blob) {

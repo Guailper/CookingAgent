@@ -20,6 +20,7 @@ from src.core.constants import (
 from src.core.exceptions import AppException
 from src.core.security import generate_public_id
 from src.db.models.attachment import Attachment
+from src.db.models.conversation import Conversation
 from src.db.models.user import User
 from src.repositories.attachment_repository import AttachmentRepository
 from src.repositories.conversation_repository import ConversationRepository
@@ -64,9 +65,10 @@ class FileService:
         try:
             for upload in files:
                 attachment, stored_path = await self._build_attachment(conversation.id, upload)
+                # 文件先落盘再写数据库；先记录路径，确保本次 flush 失败也能清理当前文件。
+                written_paths.append(stored_path)
                 self.attachment_repository.create(attachment)
                 created_attachments.append(attachment)
-                written_paths.append(stored_path)
 
             self.db.commit()
         except AppException:
@@ -90,13 +92,7 @@ class FileService:
     def delete_unbound_attachment(self, user: User, attachment_public_id: str) -> None:
         """Delete an uploaded attachment only when it is still unbound."""
 
-        attachment = self.attachment_repository.get_by_public_id(attachment_public_id)
-        if attachment is None:
-            raise AppException(404, "ATTACHMENT_NOT_FOUND", "未找到对应附件。")
-
-        conversation = self.conversation_repository.get_by_id(attachment.conversation_id)
-        if conversation is None or conversation.user_id != user.id:
-            raise AppException(404, "ATTACHMENT_NOT_FOUND", "未找到对应附件。")
+        attachment, _ = self.get_owned_attachment(user, attachment_public_id)
         if attachment.message_id is not None:
             raise AppException(
                 409,
@@ -114,6 +110,25 @@ class FileService:
             raise
 
         self._cleanup_paths([stored_path])
+
+    def get_owned_attachment(
+        self,
+        user: User,
+        attachment_public_id: str,
+    ) -> tuple[Attachment, Conversation]:
+        """Load an attachment only when its parent conversation belongs to the user."""
+
+        attachment = self.attachment_repository.get_by_public_id_with_parse_result(
+            attachment_public_id
+        )
+        if attachment is None:
+            raise AppException(404, "ATTACHMENT_NOT_FOUND", "未找到对应附件。")
+
+        conversation = self.conversation_repository.get_by_id(attachment.conversation_id)
+        if conversation is None or conversation.user_id != user.id:
+            raise AppException(404, "ATTACHMENT_NOT_FOUND", "未找到对应附件。")
+
+        return attachment, conversation
 
     async def _build_attachment(self, conversation_id: int, upload: UploadFile) -> tuple[Attachment, Path]:
         """Validate a single upload, write it to disk, and build its ORM record."""

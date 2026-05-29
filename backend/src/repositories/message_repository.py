@@ -3,6 +3,7 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from src.db.models.attachment import Attachment
 from src.db.models.message import Message
 
 
@@ -24,7 +25,7 @@ class MessageRepository:
 
         stmt = (
             select(Message)
-            .options(selectinload(Message.attachments))
+            .options(selectinload(Message.attachments).selectinload(Attachment.parse_result))
             .where(Message.id == message_id)
         )
         return self.db.scalar(stmt)
@@ -34,7 +35,7 @@ class MessageRepository:
 
         stmt = (
             select(Message)
-            .options(selectinload(Message.attachments))
+            .options(selectinload(Message.attachments).selectinload(Attachment.parse_result))
             .where(Message.conversation_id == conversation_id)
             .order_by(Message.created_at.asc())
         )
@@ -45,7 +46,7 @@ class MessageRepository:
 
         stmt = (
             select(Message)
-            .options(selectinload(Message.attachments))
+            .options(selectinload(Message.attachments).selectinload(Attachment.parse_result))
             .where(Message.conversation_id == conversation_id)
             .order_by(Message.created_at.desc())
             .limit(limit)

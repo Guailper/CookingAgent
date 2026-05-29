@@ -41,6 +41,7 @@ export default function ChatPage({ user, onLogout, onUserChange }: ChatPageProps
     workspaceNotice,
     isSendingMessage,
     isUploadingAttachments,
+    retryingAttachmentId,
     voiceComposerState,
     voiceError,
     toggleSidebar,
@@ -59,6 +60,7 @@ export default function ChatPage({ user, onLogout, onUserChange }: ChatPageProps
     handleVoiceRecordingChange,
     handleVoiceCaptureError,
     transcribeRecordedAudio,
+    retryAttachmentIngestion,
     sendMessage,
     usePromptSuggestion,
     selectSearchResult,
@@ -118,7 +120,13 @@ export default function ChatPage({ user, onLogout, onUserChange }: ChatPageProps
           <div className="workspace-main__body">
             <div className="message-scroll-container">
               {activeConversation ? (
-                <MessageList conversation={activeConversation} />
+                <MessageList
+                  conversation={activeConversation}
+                  retryingAttachmentId={retryingAttachmentId}
+                  onRetryAttachment={(attachmentId) => {
+                    void retryAttachmentIngestion(attachmentId);
+                  }}
+                />
               ) : (
                 <PromptSuggestions
                   suggestions={promptSuggestions}

@@ -32,6 +32,9 @@ PARSE_STATUS_PENDING = "pending"
 PARSE_STATUS_COMPLETED = "completed"
 PARSE_STATUS_FAILED = "failed"
 EMBEDDING_STATUS_PENDING = "pending"
+EMBEDDING_STATUS_COMPLETED = "completed"
+EMBEDDING_STATUS_FAILED = "failed"
+EMBEDDING_STATUS_REJECTED = "rejected"
 
 # Agent lifecycle states.
 AGENT_RUN_STATUS_PENDING = "pending"
@@ -59,6 +62,7 @@ ALLOWED_DOCUMENT_EXTENSIONS = (
     ".docx",
     ".pptx",
     ".xlsx",
+    ".md",
 )
 
 ALLOWED_IMAGE_EXTENSIONS = (

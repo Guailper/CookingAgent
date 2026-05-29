@@ -16,6 +16,7 @@ from src.core.exceptions import AppException
 from src.rag.chunker import TextChunker
 from src.rag.document_loader import iter_supported_files, load_rag_documents_from_path
 from src.rag.embedding_client import EmbeddingClient
+from src.rag.keyword_search import Bm25KeywordScorer
 from src.rag.milvus_repository import MilvusChunkRecord, MilvusRagRepository
 from src.rag.retriever import RagRetriever
 from src.rag.rerank_client import RerankClient, RerankResult
@@ -93,6 +94,52 @@ class _DuplicateRepository:
                 chunk_index=1,
                 content="另一个片段",
                 score=0.7,
+            ),
+        ]
+
+
+class _HybridRepository:
+    def search(self, query_embedding, knowledge_base_public_ids, top_k, min_score):
+        return [
+            MilvusChunkRecord(
+                chunk_public_id="chunk_shared",
+                knowledge_base_public_id="kb_1",
+                document_public_id="doc_1",
+                document_title="蒜蓉空心菜",
+                chunk_index=0,
+                content="空心菜加入蒜末快速翻炒。",
+                score=0.82,
+            ),
+            MilvusChunkRecord(
+                chunk_public_id="chunk_vector_only",
+                knowledge_base_public_id="kb_1",
+                document_public_id="doc_2",
+                document_title="清炒青菜",
+                chunk_index=0,
+                content="青菜翻炒至断生。",
+                score=0.71,
+            ),
+        ]
+
+    def search_keywords(self, query, knowledge_base_public_ids, top_k, scan_limit):
+        return [
+            MilvusChunkRecord(
+                chunk_public_id="chunk_shared",
+                knowledge_base_public_id="kb_1",
+                document_public_id="doc_1",
+                document_title="蒜蓉空心菜",
+                chunk_index=0,
+                content="空心菜加入蒜末快速翻炒。",
+                score=3.4,
+            ),
+            MilvusChunkRecord(
+                chunk_public_id="chunk_keyword_only",
+                knowledge_base_public_id="kb_1",
+                document_public_id="doc_3",
+                document_title="蒜蓉蔬菜技巧",
+                chunk_index=0,
+                content="蒜末要在热油中先爆香。",
+                score=2.1,
             ),
         ]
 
@@ -286,6 +333,117 @@ class RagModuleTests(unittest.TestCase):
         )
 
         self.assertNotEqual(first_key, second_key)
+
+    def test_bm25_keyword_scorer_ranks_exact_recipe_terms_first(self) -> None:
+        matches = Bm25KeywordScorer().rank(
+            "清蒸鲈鱼 蒸鱼豉油",
+            [
+                "蛋炒饭需要隔夜米饭和鸡蛋。",
+                "清蒸鲈鱼出锅前淋蒸鱼豉油，鱼肉鲜嫩。",
+                "红烧鱼加入生抽和糖调味。",
+            ],
+            top_k=2,
+        )
+
+        self.assertEqual(matches[0][0], 1)
+        self.assertGreater(matches[0][1], 0)
+
+    def test_milvus_repository_search_keywords_uses_bm25_ranking(self) -> None:
+        class _KeywordClient:
+            def has_collection(self, collection_name):
+                return True
+
+            def query(self, **kwargs):
+                return [
+                    {
+                        "chunk_public_id": "chunk_1",
+                        "knowledge_base_public_id": "cookbook",
+                        "document_public_id": "doc_1",
+                        "document_title": "蛋炒饭",
+                        "chunk_index": 0,
+                        "page_no": 0,
+                        "content": "米饭和鸡蛋快速翻炒。",
+                        "metadata_json": "{}",
+                    },
+                    {
+                        "chunk_public_id": "chunk_2",
+                        "knowledge_base_public_id": "cookbook",
+                        "document_public_id": "doc_2",
+                        "document_title": "清蒸鲈鱼",
+                        "chunk_index": 0,
+                        "page_no": 0,
+                        "content": "清蒸鲈鱼加入蒸鱼豉油。",
+                        "metadata_json": "{}",
+                    },
+                ]
+
+        repository = MilvusRagRepository(SimpleNamespace(milvus_collection="rag_chunks"))
+        repository._client = _KeywordClient()
+
+        results = repository.search_keywords("清蒸鲈鱼 蒸鱼豉油", ["cookbook"], top_k=1, scan_limit=50)
+
+        self.assertEqual(results[0].document_title, "清蒸鲈鱼")
+        self.assertGreater(results[0].score, 0)
+
+    def test_milvus_repository_replaces_existing_document_chunks_before_insert(self) -> None:
+        calls = []
+
+        class _ReplaceClient:
+            def has_collection(self, collection_name):
+                return True
+
+            def delete(self, **kwargs):
+                calls.append(("delete", kwargs))
+
+            def insert(self, **kwargs):
+                calls.append(("insert", kwargs))
+
+        repository = MilvusRagRepository(SimpleNamespace(milvus_collection="rag_chunks"))
+        repository._client = _ReplaceClient()
+        repository.upsert_chunks(
+            [
+                MilvusChunkRecord(
+                    chunk_public_id="chunk_retry",
+                    knowledge_base_public_id="cookbook",
+                    document_public_id="att_retry",
+                    document_title="番茄炒蛋",
+                    chunk_index=0,
+                    content="先炒蛋再炒番茄。",
+                    embedding=[0.1, 0.2],
+                )
+            ]
+        )
+
+        self.assertEqual([operation for operation, _ in calls], ["delete", "insert"])
+        self.assertIn('document_public_id == "att_retry"', calls[0][1]["filter"])
+
+    def test_retriever_fuses_vector_and_keyword_recall_before_rerank(self) -> None:
+        settings = SimpleNamespace(
+            rag_vector_top_k=3,
+            rag_final_top_k=3,
+            rag_min_score=0.25,
+            rag_cache_ttl_seconds=0,
+            rag_hybrid_search_enabled=True,
+            rag_keyword_top_k=3,
+            rag_keyword_scan_limit=50,
+            rag_rrf_k=60,
+            milvus_collection="rag_chunks",
+            redis_key_prefix="test",
+        )
+        retriever = RagRetriever(
+            settings=settings,
+            embedding_client=_FakeEmbeddingClient(),
+            repository=_HybridRepository(),
+            rerank_client=_DisabledRerankClient(),
+        )
+
+        chunks = retriever.retrieve("蒜蓉空心菜", ["kb_1"])
+
+        self.assertEqual(chunks[0].document_title, "蒜蓉空心菜")
+        self.assertEqual(chunks[0].metadata["retrieval_mode"], "hybrid_rrf")
+        self.assertEqual(chunks[0].metadata["vector_rank"], 1)
+        self.assertEqual(chunks[0].metadata["keyword_rank"], 1)
+        self.assertIn("蒜蓉蔬菜技巧", [chunk.document_title for chunk in chunks])
 
     def test_settings_resolves_local_model_paths_from_project_root(self) -> None:
         env = {

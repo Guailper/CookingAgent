@@ -1,0 +1,33 @@
+{
+  "purpose": "Manual and automated evaluation samples for attachment upload, parsing, content validation, and knowledge-base ingestion.",
+  "samples": [
+    {
+      "file": "01_recipe_should_ingest.docx",
+      "expected_upload": "accepted",
+      "expected_validation_category": "cooking_related",
+      "expected_embedding_status": "completed",
+      "notes": "Clear reusable recipe content. It should pass small-model validation and be indexed."
+    },
+    {
+      "file": "02_business_report_should_reject.docx",
+      "expected_upload": "accepted",
+      "expected_validation_category": "irrelevant",
+      "expected_embedding_status": "rejected",
+      "notes": "Business report content. It should upload but not enter the knowledge base."
+    },
+    {
+      "file": "03_mixed_low_confidence_should_reject.docx",
+      "expected_upload": "accepted",
+      "expected_validation_category": "uncertain",
+      "expected_embedding_status": "rejected",
+      "notes": "Mixed event planning content with only incidental lunch mentions. It should fail closed."
+    },
+    {
+      "file": "04_unsupported_plain_text_should_fail_upload.txt",
+      "expected_upload": "rejected",
+      "expected_validation_category": null,
+      "expected_embedding_status": null,
+      "notes": "Unsupported extension sample for upload whitelist checks."
+    }
+  ]
+}

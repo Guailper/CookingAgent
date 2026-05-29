@@ -8,10 +8,12 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { formatAttachmentSize } from "../../services";
-import type { ChatConversation, ChatMessage } from "../../types";
+import type { ChatAttachment, ChatConversation, ChatMessage } from "../../types";
 
 type MessageListProps = {
   conversation: ChatConversation;
+  retryingAttachmentId?: string | null;
+  onRetryAttachment?: (attachmentId: string) => void;
 };
 
 function getMessageRoleLabel(message: ChatMessage) {
@@ -45,7 +47,39 @@ function MessageContent({ message }: { message: ChatMessage }) {
   );
 }
 
-export function MessageList({ conversation }: MessageListProps) {
+function getAttachmentProcessingLabel(attachment: ChatAttachment) {
+  if (attachment.embeddingStatus === "completed") {
+    return "已入库";
+  }
+
+  if (attachment.embeddingStatus === "rejected") {
+    return "内容不符合烹饪主题";
+  }
+
+  if (attachment.embeddingStatus === "failed") {
+    return "入库失败";
+  }
+
+  if (attachment.parseStatus === "failed") {
+    return "解析失败";
+  }
+
+  if (attachment.parseStatus === "completed") {
+    return "已解析";
+  }
+
+  return "待处理";
+}
+
+function canRetryAttachment(attachment: ChatAttachment) {
+  return attachment.parseStatus === "failed" || attachment.embeddingStatus === "failed";
+}
+
+export function MessageList({
+  conversation,
+  retryingAttachmentId = null,
+  onRetryAttachment,
+}: MessageListProps) {
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const [isBackToTopVisible, setIsBackToTopVisible] = useState(false);
   const lastMessage = conversation.messages[conversation.messages.length - 1];
@@ -97,8 +131,19 @@ export function MessageList({ conversation }: MessageListProps) {
                       <strong>{attachment.name}</strong>
                       <span>
                         {attachment.kind === "image" ? "图片" : "文档"} ·{" "}
-                        {formatAttachmentSize(attachment.size)}
+                        {formatAttachmentSize(attachment.size)} ·{" "}
+                        {getAttachmentProcessingLabel(attachment)}
                       </span>
+                      {canRetryAttachment(attachment) && onRetryAttachment && (
+                        <button
+                          className="message-bubble__attachment-retry"
+                          type="button"
+                          disabled={retryingAttachmentId === attachment.id}
+                          onClick={() => onRetryAttachment(attachment.id)}
+                        >
+                          {retryingAttachmentId === attachment.id ? "重新入库中..." : "重新入库"}
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>

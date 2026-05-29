@@ -72,11 +72,7 @@ def build_chat_model(
         model=model_name,
         api_key=api_key,
         base_url=base_url.rstrip("/"),
-        temperature=(
-            temperature
-            if temperature is not None
-            else _resolve_temperature(settings, provider, model_name)
-        ),
+        temperature=_resolve_temperature(settings, provider, model_name, temperature),
         max_tokens=(
             settings.agent_max_output_tokens
             if settings.agent_max_output_tokens > 0
@@ -91,6 +87,7 @@ def _resolve_temperature(
     settings: Settings,
     provider: str,
     model_name: str | None = None,
+    preferred_temperature: float | None = None,
 ) -> float:
     """返回当前 provider 可接受的 temperature。
 
@@ -104,6 +101,9 @@ def _resolve_temperature(
         if _should_disable_reasoning(settings, provider, normalized_model_name):
             return 0.6
         return 1.0
+
+    if preferred_temperature is not None:
+        return preferred_temperature
 
     return settings.agent_temperature
 

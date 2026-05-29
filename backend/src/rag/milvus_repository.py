@@ -6,6 +6,7 @@ from typing import Any
 
 from src.core.config import Settings
 from src.core.exceptions import AppException
+from src.rag.keyword_search import Bm25KeywordScorer
 
 
 @dataclass(frozen=True)
@@ -79,7 +80,7 @@ class MilvusRagRepository:
         return True
 
     def upsert_chunks(self, records: list[MilvusChunkRecord]) -> None:
-        """Insert or upsert chunk vectors into Milvus."""
+        """Replace one document's chunks so retries do not create duplicates."""
 
         if not records:
             return
@@ -89,6 +90,13 @@ class MilvusRagRepository:
             raise AppException(400, "RAG_EMPTY_EMBEDDING", "写入 Milvus 的向量不能为空。")
 
         self.ensure_collection(vector_dim)
+        self._get_client().delete(
+            collection_name=self.settings.milvus_collection,
+            filter=self._build_document_filter(
+                records[0].knowledge_base_public_id,
+                records[0].document_public_id,
+            ),
+        )
         rows = [self._record_to_row(record) for record in records]
         self._get_client().insert(
             collection_name=self.settings.milvus_collection,
@@ -144,6 +152,46 @@ class MilvusRagRepository:
             records.append(self._row_to_record(entity, score))
 
         return records
+
+    def search_keywords(
+        self,
+        query: str,
+        knowledge_base_public_ids: list[str],
+        top_k: int,
+        scan_limit: int,
+    ) -> list[MilvusChunkRecord]:
+        """Recall keyword-matching chunks for hybrid retrieval without a schema migration."""
+
+        normalized_query = " ".join((query or "").split())
+        if not normalized_query or not knowledge_base_public_ids:
+            return []
+
+        client = self._get_client()
+        collection_name = self.settings.milvus_collection
+        if not client.has_collection(collection_name):
+            return []
+
+        rows = client.query(
+            collection_name=collection_name,
+            filter=self._build_filter(knowledge_base_public_ids),
+            output_fields=[
+                "chunk_public_id",
+                "knowledge_base_public_id",
+                "document_public_id",
+                "document_title",
+                "chunk_index",
+                "page_no",
+                "content",
+                "metadata_json",
+            ],
+            limit=max(top_k, scan_limit),
+        )
+        ranked_matches = Bm25KeywordScorer().rank(
+            normalized_query,
+            [str(row.get("content") or "") for row in rows],
+            top_k=top_k,
+        )
+        return [self._row_to_record(rows[index], score) for index, score in ranked_matches]
 
     def _get_client(self):
         if self._client is not None:
@@ -210,6 +258,18 @@ class MilvusRagRepository:
     def _build_filter(self, knowledge_base_public_ids: list[str]) -> str:
         values = json.dumps(knowledge_base_public_ids, ensure_ascii=False)
         return f"knowledge_base_public_id in {values}"
+
+    def _build_document_filter(
+        self,
+        knowledge_base_public_id: str,
+        document_public_id: str,
+    ) -> str:
+        knowledge_base_value = json.dumps(knowledge_base_public_id, ensure_ascii=False)
+        document_value = json.dumps(document_public_id, ensure_ascii=False)
+        return (
+            f"knowledge_base_public_id == {knowledge_base_value} "
+            f"and document_public_id == {document_value}"
+        )
 
     def _extract_score(self, item: dict[str, Any]) -> float | None:
         raw_score = item.get("distance", item.get("score"))

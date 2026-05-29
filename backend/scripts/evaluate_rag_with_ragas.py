@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import argparse
 import csv
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 import json
 import os
 from pathlib import Path
@@ -23,6 +23,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from agent.contracts import AgentTurnContext, WebSearchContext
+from agent.factories.model_factory import build_chat_model
 from agent.rag.context_builder import RagContextBuilder
 from agent.runner import LangChainAgentRunner
 from agent.web.context_builder import WebSearchContextBuilder
@@ -46,6 +47,7 @@ class RagasEvalCase:
     question: str
     reference: str
     knowledge_base_ids: list[str]
+    expected_source_paths: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -61,6 +63,8 @@ class RagasRunSample:
     chunk_count: int
     chunk_metadata: list[dict[str, Any]]
     elapsed_seconds: float
+    expected_source_paths: list[str] = field(default_factory=list)
+    retrieval_metrics: dict[str, float] = field(default_factory=dict)
 
     def to_ragas_row(self) -> dict[str, Any]:
         return {
@@ -83,11 +87,13 @@ def main() -> None:
     samples = run_project_pipeline(
         cases,
         include_web_search=args.include_web_search,
-        ragas_temperature=args.ragas_temperature,
         disable_model_fallback=args.disable_model_fallback,
     )
     samples_path = save_run_samples(samples, args.output_dir)
     print(f"Saved project RAG samples: {samples_path}")
+    retrieval_report_path = save_retrieval_report(samples, args.output_dir)
+    if retrieval_report_path is not None:
+        print(f"Saved retrieval metrics: {retrieval_report_path}")
 
     if args.skip_evaluate:
         print("Skipped ragas scoring because --skip-evaluate was provided.")
@@ -242,16 +248,25 @@ def load_cases(path: Path, default_knowledge_base_id: str) -> list[RagasEvalCase
         question = str(raw_case.get("question", "")).strip()
         reference = str(raw_case.get("reference", "")).strip()
         knowledge_base_ids = raw_case.get("knowledge_base_ids") or [default_knowledge_base_id]
+        expected_source_paths = raw_case.get("expected_source_paths")
+        if expected_source_paths is None:
+            source_path = str(raw_case.get("source_path", "")).strip()
+            expected_source_paths = [source_path] if source_path else []
         if not question or not reference:
             raise SystemExit(f"Case line {line_number} must include question and reference.")
         if not isinstance(knowledge_base_ids, list):
             raise SystemExit(f"Case line {line_number} knowledge_base_ids must be a list.")
+        if not isinstance(expected_source_paths, list):
+            raise SystemExit(f"Case line {line_number} expected_source_paths must be a list.")
 
         cases.append(
             RagasEvalCase(
                 question=question,
                 reference=reference,
                 knowledge_base_ids=[str(item).strip() for item in knowledge_base_ids if str(item).strip()],
+                expected_source_paths=[
+                    str(item).strip() for item in expected_source_paths if str(item).strip()
+                ],
             )
         )
 
@@ -262,15 +277,12 @@ def run_project_pipeline(
     cases: list[RagasEvalCase],
     *,
     include_web_search: bool,
-    ragas_temperature: float,
     disable_model_fallback: bool,
 ) -> list[RagasRunSample]:
     base_settings = get_settings()
     primary_candidate = resolve_primary_model_candidate(base_settings)
     settings = replace(
         base_settings,
-        agent_temperature=ragas_temperature,
-        rag_query_rewrite_temperature=ragas_temperature,
         agent_model_candidates=(
             [primary_candidate]
             if disable_model_fallback and primary_candidate is not None
@@ -302,6 +314,7 @@ def run_project_pipeline(
                 web_search_context=web_context,
             )
         )
+        chunk_metadata = [chunk.metadata for chunk in rag_context.chunks]
         samples.append(
             RagasRunSample(
                 user_input=case.question,
@@ -311,8 +324,13 @@ def run_project_pipeline(
                 rag_status=rag_context.status,
                 model_name=result.model_name,
                 chunk_count=len(rag_context.chunks),
-                chunk_metadata=[chunk.metadata for chunk in rag_context.chunks],
+                chunk_metadata=chunk_metadata,
                 elapsed_seconds=time.perf_counter() - started_at,
+                expected_source_paths=case.expected_source_paths,
+                retrieval_metrics=compute_retrieval_metrics(
+                    case.expected_source_paths,
+                    chunk_metadata,
+                ),
             )
         )
 
@@ -335,6 +353,84 @@ def save_run_samples(samples: list[RagasRunSample], output_dir: Path) -> Path:
         for sample in samples:
             file.write(json.dumps(asdict(sample), ensure_ascii=False) + "\n")
     return path
+
+
+def compute_retrieval_metrics(
+    expected_source_paths: list[str],
+    chunk_metadata: list[dict[str, Any]],
+) -> dict[str, float]:
+    """Compute per-case source-document retrieval metrics at the returned K."""
+
+    expected_paths = {
+        normalized_path
+        for path in expected_source_paths
+        if (normalized_path := _normalize_source_path(path))
+    }
+    if not expected_paths:
+        return {}
+
+    retrieved_paths = [
+        normalized_path
+        for metadata in chunk_metadata
+        if (normalized_path := _normalize_source_path(str(metadata.get("source_path", ""))))
+    ]
+    matched_paths = expected_paths.intersection(retrieved_paths)
+    first_match_rank = next(
+        (rank for rank, source_path in enumerate(retrieved_paths, start=1) if source_path in expected_paths),
+        None,
+    )
+    return {
+        "hit_at_k": 1.0 if matched_paths else 0.0,
+        "recall_at_k": len(matched_paths) / len(expected_paths),
+        "reciprocal_rank": 1.0 / first_match_rank if first_match_rank is not None else 0.0,
+    }
+
+
+def summarize_retrieval_metrics(samples: list[RagasRunSample]) -> dict[str, float | int]:
+    """Average retrieval metrics over cases that declare expected sources."""
+
+    scored_metrics = [sample.retrieval_metrics for sample in samples if sample.retrieval_metrics]
+    if not scored_metrics:
+        return {"case_count": 0, "hit_at_k": 0.0, "recall_at_k": 0.0, "mrr": 0.0}
+
+    case_count = len(scored_metrics)
+    return {
+        "case_count": case_count,
+        "hit_at_k": sum(metrics["hit_at_k"] for metrics in scored_metrics) / case_count,
+        "recall_at_k": sum(metrics["recall_at_k"] for metrics in scored_metrics) / case_count,
+        "mrr": sum(metrics["reciprocal_rank"] for metrics in scored_metrics) / case_count,
+    }
+
+
+def save_retrieval_report(samples: list[RagasRunSample], output_dir: Path) -> Path | None:
+    """Save deterministic retrieval metrics alongside the LLM-based RAGAS report."""
+
+    summary = summarize_retrieval_metrics(samples)
+    if summary["case_count"] == 0:
+        return None
+
+    path = output_dir / f"retrieval_metrics_{build_run_id()}.json"
+    payload = {
+        "summary": summary,
+        "cases": [
+            {
+                "user_input": sample.user_input,
+                "expected_source_paths": sample.expected_source_paths,
+                "retrieval_metrics": sample.retrieval_metrics,
+            }
+            for sample in samples
+            if sample.retrieval_metrics
+        ],
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
+def _normalize_source_path(path: str) -> str:
+    normalized_path = path.replace("\\", "/").strip().lstrip("./")
+    if normalized_path.startswith("data/"):
+        normalized_path = normalized_path[len("data/") :]
+    return normalized_path
 
 
 def evaluate_with_ragas(
@@ -474,7 +570,7 @@ def build_ragas_llm(
 
 
 class FixedTemperatureLangchainLLMWrapper:
-    """Keep ragas from overriding provider-specific temperature constraints."""
+    """Keep ragas requests within provider-specific generation constraints."""
 
     def __init__(
         self,
@@ -490,6 +586,7 @@ class FixedTemperatureLangchainLLMWrapper:
         self.inner = wrapper_factory(
             langchain_llm,
             bypass_temperature=True,
+            bypass_n=True,
         )
         self.langchain_llm = langchain_llm
 
@@ -559,16 +656,10 @@ def resolve_ragas_model_candidate(
 
 
 def build_ragas_chat_model(settings: Any, model_config: Any, temperature: float) -> Any:
-    from langchain_openai import ChatOpenAI
-
-    return ChatOpenAI(
-        model=model_config.model_name,
-        api_key=model_config.api_key,
-        base_url=model_config.base_url.rstrip("/"),
-        temperature=temperature,
-        timeout=settings.agent_request_timeout_seconds,
-        max_retries=0,
-    )
+    # Keep provider handling (for example Kimi's thinking/temperature pair), but
+    # do not truncate judge rationales with the answer model's short output cap.
+    judge_settings = replace(settings, agent_max_output_tokens=0)
+    return build_chat_model(judge_settings, model_config, temperature=temperature)
 
 
 def build_ragas_embeddings() -> Any | None:
@@ -587,12 +678,14 @@ def build_ragas_embeddings() -> Any | None:
 
 
 def build_local_ragas_embeddings(settings: Any) -> Any | None:
-    device = resolve_compute_device()
-    modern_embeddings = build_modern_local_ragas_embeddings(settings, device)
-    if modern_embeddings is not None:
-        return modern_embeddings
+    # The installed RAGAS relevance metrics still call the LangChain-style
+    # embed_query API, while its modern HuggingFace adapter exposes embed_text.
+    compatible_embeddings = build_legacy_local_langchain_embeddings(settings)
+    if compatible_embeddings is not None:
+        return compatible_embeddings
 
-    return build_legacy_local_langchain_embeddings(settings)
+    device = resolve_compute_device()
+    return build_modern_local_ragas_embeddings(settings, device)
 
 
 def build_modern_local_ragas_embeddings(settings: Any, device: str) -> Any | None:
@@ -656,6 +749,12 @@ class ProjectLocalEmbeddings:
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         return self.client.embed_documents(texts)
+
+    async def aembed_query(self, text: str) -> list[float]:
+        return self.embed_query(text)
+
+    async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
+        return self.embed_documents(texts)
 
 
 def build_modern_ragas_embeddings(settings: Any) -> Any | None:

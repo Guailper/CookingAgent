@@ -54,10 +54,16 @@ export type ApiAttachmentItem = {
   file_size: number;
   attachment_kind: "document" | "image";
   parse_status: string;
+  embedding_status: string;
   created_at: string;
 };
 
 export type ApiAttachmentUploadResponse = ApiEnvelope<ApiAttachmentItem[]>;
+export type ApiAttachmentIngestRetryResponse = ApiEnvelope<{
+  attachment: ApiAttachmentItem;
+  indexed_documents: Array<Record<string, unknown>>;
+  skipped_documents: Array<Record<string, unknown>>;
+}>;
 
 export type ApiVoiceTranscriptionResponse = ApiEnvelope<{
   transcript: string;

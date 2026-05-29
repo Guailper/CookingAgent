@@ -626,6 +626,132 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
             "https://example.com/sweet-potato",
         )
 
+    def test_answer_workflow_attaches_verified_knowledge_citations_on_hit(self) -> None:
+        fake_runner = SimpleNamespace(
+            run=lambda context: build_agent_result(
+                response={"messages": [SimpleNamespace(type="ai", content="大火蒸约 8 分钟。")]},
+                model_name="test-model",
+                provider="openai_compatible",
+            )
+        )
+        fake_rag_builder = SimpleNamespace(
+            build=lambda context: RagContext(
+                enabled=True,
+                status="hit",
+                query=context.user_message_text,
+                chunks=[
+                    RetrievedChunk(
+                        content="鲈鱼大火蒸约 8 分钟。",
+                        document_title="清蒸鲈鱼",
+                        chunk_index=2,
+                        metadata={
+                            "source_path": "cook/dishes/aquatic/清蒸鲈鱼.md",
+                            "heading_path": "清蒸鲈鱼 > 步骤",
+                        },
+                    )
+                ],
+            )
+        )
+
+        result = AnswerWorkflow(
+            runner=fake_runner,
+            settings=self._settings(),
+            rag_context_builder=fake_rag_builder,
+        ).run(
+            self._context(text="清蒸鲈鱼蒸多久？"),
+            SimpleNamespace(intent_type="answer", confidence=1.0, source="default", reason="default"),
+        )
+
+        self.assertIn("已核验来源：", result.reply_text)
+        self.assertIn("清蒸鲈鱼 > 步骤", result.reply_text)
+        self.assertEqual(
+            result.output_snapshot["citation_validation"]["status"],
+            "verified_knowledge_citations_attached",
+        )
+
+    def test_answer_workflow_refuses_explicit_evidence_question_without_results(self) -> None:
+        called = {"runner": False}
+
+        def run_agent(context):
+            called["runner"] = True
+            raise AssertionError("No-evidence requests must not invoke the model.")
+
+        fake_rag_builder = SimpleNamespace(
+            build=lambda context: RagContext(
+                enabled=True,
+                status="miss",
+                query=context.user_message_text,
+            )
+        )
+        fake_web_builder = SimpleNamespace(
+            build=lambda context, rag_context: WebSearchContext(
+                enabled=False,
+                status="disabled",
+                query=context.user_message_text,
+            )
+        )
+
+        result = AnswerWorkflow(
+            runner=SimpleNamespace(run=run_agent),
+            settings=self._settings(),
+            rag_context_builder=fake_rag_builder,
+            web_search_context_builder=fake_web_builder,
+        ).run(
+            self._context(text="根据知识库，清蒸鲈鱼应该蒸多久？"),
+            SimpleNamespace(intent_type="answer", confidence=1.0, source="default", reason="default"),
+        )
+
+        self.assertFalse(called["runner"])
+        self.assertIn("没有检索到足够证据", result.reply_text)
+        self.assertTrue(result.output_snapshot["citation_validation"]["refused"])
+
+    def test_answer_workflow_stream_emits_verified_citation_suffix(self) -> None:
+        class _StreamingRunner:
+            def stream(self, context):
+                yield {"event": "delta", "data": {"content": "先炒鸡蛋。"}}
+                yield {
+                    "event": "final",
+                    "data": build_agent_result(
+                        response={"messages": [SimpleNamespace(type="ai", content="先炒鸡蛋。")]},
+                        model_name="test-model",
+                        provider="openai_compatible",
+                    ),
+                }
+
+        fake_rag_builder = SimpleNamespace(
+            build=lambda context: RagContext(
+                enabled=True,
+                status="hit",
+                query=context.user_message_text,
+                chunks=[
+                    RetrievedChunk(
+                        content="先炒鸡蛋。",
+                        document_title="番茄炒蛋",
+                        metadata={"source_path": "cook/番茄炒蛋.md"},
+                    )
+                ],
+            )
+        )
+        workflow = AnswerWorkflow(
+            runner=_StreamingRunner(),
+            settings=self._settings(),
+            rag_context_builder=fake_rag_builder,
+        )
+
+        events = list(
+            workflow.stream(
+                self._context(text="番茄炒蛋怎么做？"),
+                SimpleNamespace(intent_type="answer", confidence=1.0, source="default", reason="default"),
+            )
+        )
+        streamed_text = "".join(
+            event["data"]["content"] for event in events if event["event"] == "delta"
+        )
+        final_result = events[-1]["data"]
+
+        self.assertIn("已核验来源：", streamed_text)
+        self.assertEqual(streamed_text, final_result.reply_text)
+
     def test_output_normalizer_extracts_final_ai_message_and_metadata(self) -> None:
         messages = [
             SimpleNamespace(type="human", content="你好"),
@@ -914,7 +1040,7 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
         )
 
         with patch.dict(sys.modules, {"langchain_openai": fake_langchain_openai}):
-            build_chat_model(settings)
+            build_chat_model(settings, temperature=0.0)
 
         self.assertEqual(captured_kwargs["model"], "kimi-k2.5")
         self.assertEqual(captured_kwargs["temperature"], 0.6)
@@ -941,6 +1067,62 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
         self.assertEqual(settings.agent_model_base_url, "https://api.moonshot.cn/v1")
         self.assertEqual(settings.agent_model_api_key, "kimi-key")
         self.assertEqual(settings.agent_model_name, "kimi-k2.5")
+
+    def test_settings_loads_independent_content_validation_model_config(self) -> None:
+        env = {
+            "CONTENT_VALIDATION_MODEL_PROVIDER": "local",
+            "CONTENT_VALIDATION_MODEL_BASE_URL": "http://127.0.0.1:11434/v1",
+            "CONTENT_VALIDATION_MODEL_API_KEY": "not-needed",
+            "CONTENT_VALIDATION_MODEL_NAME": "qwen2.5:3b",
+        }
+
+        with patch.dict("os.environ", env, clear=True):
+            get_settings.cache_clear()
+            settings = get_settings()
+            get_settings.cache_clear()
+
+        self.assertEqual(settings.content_validation_model_provider, "local")
+        self.assertEqual(
+            settings.content_validation_model_base_url,
+            "http://127.0.0.1:11434/v1",
+        )
+        self.assertEqual(settings.content_validation_model_api_key, "not-needed")
+        self.assertEqual(settings.content_validation_model_name, "qwen2.5:3b")
+        self.assertEqual(settings.agent_model_provider, "disabled")
+
+    def test_settings_loads_intent_model_config_and_weights(self) -> None:
+        env = {
+            "INTENT_RULE_WEIGHT": "0.7",
+            "INTENT_MODEL_WEIGHT": "0.3",
+            "INTENT_MODEL_PROVIDER": "local",
+            "INTENT_MODEL_BASE_URL": "http://127.0.0.1:11434/v1",
+            "INTENT_MODEL_API_KEY": "not-needed",
+            "INTENT_MODEL_NAME": "qwen2.5:3b",
+        }
+
+        with patch.dict("os.environ", env, clear=True):
+            get_settings.cache_clear()
+            settings = get_settings()
+            get_settings.cache_clear()
+
+        self.assertEqual(settings.intent_rule_weight, 0.7)
+        self.assertEqual(settings.intent_model_weight, 0.3)
+        self.assertEqual(settings.intent_model_provider, "local")
+        self.assertEqual(settings.intent_model_base_url, "http://127.0.0.1:11434/v1")
+        self.assertEqual(settings.intent_model_api_key, "not-needed")
+        self.assertEqual(settings.intent_model_name, "qwen2.5:3b")
+
+    def test_settings_rejects_invalid_intent_weight_sum(self) -> None:
+        env = {
+            "INTENT_RULE_WEIGHT": "0.7",
+            "INTENT_MODEL_WEIGHT": "0.4",
+        }
+
+        with patch.dict("os.environ", env, clear=True):
+            get_settings.cache_clear()
+            with self.assertRaises(ValueError):
+                get_settings()
+            get_settings.cache_clear()
 
     def test_settings_builds_agent_model_fallback_candidates_in_configured_order(self) -> None:
         env = {

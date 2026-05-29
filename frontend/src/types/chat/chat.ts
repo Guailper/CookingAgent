@@ -15,6 +15,7 @@ export type ChatAttachment = {
   size: number;
   kind: ChatAttachmentKind;
   parseStatus: string;
+  embeddingStatus: string;
 };
 
 export type PendingAttachmentStatus = "pending" | "uploaded";

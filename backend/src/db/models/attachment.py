@@ -7,7 +7,11 @@ from sqlalchemy import ForeignKey, Index, String, text
 from sqlalchemy.dialects.mysql import BIGINT, DATETIME
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.core.constants import ATTACHMENT_KIND_DOCUMENT, PARSE_STATUS_PENDING
+from src.core.constants import (
+    ATTACHMENT_KIND_DOCUMENT,
+    EMBEDDING_STATUS_PENDING,
+    PARSE_STATUS_PENDING,
+)
 from src.db.base import Base
 
 if TYPE_CHECKING:
@@ -144,6 +148,14 @@ class Attachment(Base):
         passive_deletes=True,
         uselist=False,
     )
+
+    @property
+    def embedding_status(self) -> str:
+        """Return a frontend-safe ingestion status before a parse row exists."""
+
+        if self.parse_result is None:
+            return EMBEDDING_STATUS_PENDING
+        return self.parse_result.embedding_status
 
     def __repr__(self) -> str:
         return (
