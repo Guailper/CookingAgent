@@ -4,6 +4,10 @@ from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
 from agent.factories.model_factory import build_chat_model
+from agent.prompts.system_prompts import (
+    build_content_validation_document_prompt,
+    build_content_validation_system_prompt,
+)
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
@@ -14,6 +18,17 @@ logger = get_logger(__name__)
 
 CONTENT_VALIDATION_STATUS_COMPLETED = "completed"
 CONTENT_VALIDATION_STATUS_FAILED = "failed"
+RESUME_SECTION_MARKERS = (
+    "教育背景",
+    "工作经历",
+    "项目经历",
+    "实习经历",
+    "获奖经历",
+    "个人技能",
+    "专业技能",
+    "求职意向",
+    "自我评价",
+)
 
 
 class ContentValidationModelResult(BaseModel):
@@ -59,13 +74,44 @@ class AttachmentContentValidationService:
         """Return a fail-closed semantic classification for an attachment."""
 
         model_config = self._resolve_model_config()
+        irrelevant_reason = _detect_high_confidence_irrelevant_content(text)
+        if irrelevant_reason:
+            return AttachmentContentValidation(
+                accepted=False,
+                category="irrelevant",
+                confidence=1.0,
+                reason=irrelevant_reason,
+                status=CONTENT_VALIDATION_STATUS_COMPLETED,
+                model_provider=model_config.provider,
+                model_name=model_config.model_name,
+            )
+
         try:
             model = build_chat_model(self.settings, model_config, temperature=0.0)
-            structured_model = model.with_structured_output(ContentValidationModelResult)
+            structured_model = model.with_structured_output(
+                ContentValidationModelResult,
+                method=(
+                    "json_mode"
+                    if model_config.provider == "local"
+                    else "json_schema"
+                ),
+            )
+            system_prompt = build_content_validation_system_prompt()
+            if model_config.provider == "local":
+                system_prompt += (
+                    "\nReturn only a valid JSON object with accepted, category, "
+                    "confidence, and reason."
+                )
             response = structured_model.invoke(
                 [
-                    SystemMessage(content=_content_validation_system_prompt()),
-                    HumanMessage(content=self._build_document_prompt(title=title, text=text)),
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(
+                        content=build_content_validation_document_prompt(
+                            title=title,
+                            text=text,
+                            max_document_chars=self.MAX_DOCUMENT_CHARS,
+                        )
+                    ),
                 ]
             )
             classification = _normalize_classification(response)
@@ -123,35 +169,21 @@ class AttachmentContentValidationService:
             ).strip(),
         )
 
-    def _build_document_prompt(self, *, title: str, text: str) -> str:
-        normalized_title = " ".join((title or "").strip().split())
-        normalized_text = (text or "").strip()
-        if len(normalized_text) > self.MAX_DOCUMENT_CHARS:
-            head_chars = self.MAX_DOCUMENT_CHARS * 2 // 3
-            tail_chars = self.MAX_DOCUMENT_CHARS - head_chars
-            normalized_text = (
-                f"{normalized_text[:head_chars]}\n...[正文截断]...\n"
-                f"{normalized_text[-tail_chars:]}"
-            )
-
-        return f"文档标题：{normalized_title}\n\n文档正文摘录：\n{normalized_text}"
-
-
-def _content_validation_system_prompt() -> str:
-    return "\n".join(
-        [
-            "你是 CookingAgent 知识库的附件主题分类器。",
-            "请依据文档整体语义判断它是否适合进入做饭知识库，不要按固定关键词机械判定。",
-            "cooking_related：以菜谱、烹饪方法、备菜加工、厨房技巧、食材营养或餐食规划为核心的可复用资料。",
-            "irrelevant：主题属于财务、办公、编程、文学或其他与烹饪知识无关的资料。",
-            "uncertain：文本过短、混杂主题或证据不足，无法可靠确认是否属于做饭知识。",
-            "只有 category 为 cooking_related 且你有充分把握时，accepted 才能为 true。",
-            "reason 使用简短中文说明理由。",
-        ]
-    )
-
-
 def _normalize_classification(response: Any) -> ContentValidationModelResult:
     if isinstance(response, ContentValidationModelResult):
         return response
     return ContentValidationModelResult.model_validate(response)
+
+
+def _detect_high_confidence_irrelevant_content(text: str) -> str | None:
+    """Reject document structures that are clearly unrelated before model classification."""
+
+    normalized_text = (text or "").strip()
+    matched_resume_sections = [
+        marker for marker in RESUME_SECTION_MARKERS if marker in normalized_text
+    ]
+    if len(matched_resume_sections) >= 3:
+        evidence = "、".join(matched_resume_sections[:4])
+        return f"正文检测到明确的简历结构（{evidence}），不属于烹饪知识资料。"
+
+    return None

@@ -5,6 +5,7 @@
 """
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import subprocess
 from uuid import uuid4
@@ -154,6 +155,7 @@ class AttachmentParseService:
                 errors="replace",
                 timeout=self.settings.mineru_parse_timeout_seconds,
                 check=False,
+                env=self._build_mineru_environment(),
             )
         except FileNotFoundError as exc:
             raise RuntimeError(
@@ -194,6 +196,28 @@ class AttachmentParseService:
         # 预留给 MinerU 新版本或部署侧的额外参数，例如并发、设备或模型源。
         command.extend(self.settings.mineru_extra_args)
         return command
+
+    @staticmethod
+    def _build_mineru_environment() -> dict[str, str]:
+        environment = os.environ.copy()
+        environment.setdefault("MINERU_MODEL_SOURCE", "local")
+        no_proxy_entries = [
+            entry.strip()
+            for entry in (
+                environment.get("NO_PROXY")
+                or environment.get("no_proxy")
+                or ""
+            ).split(",")
+            if entry.strip()
+        ]
+        for local_host in ("127.0.0.1", "localhost", "::1"):
+            if local_host not in no_proxy_entries:
+                no_proxy_entries.append(local_host)
+
+        no_proxy = ",".join(no_proxy_entries)
+        environment["NO_PROXY"] = no_proxy
+        environment["no_proxy"] = no_proxy
+        return environment
 
     def _find_markdown_file(self, output_dir: Path, source_stem: str) -> Path:
         markdown_files = [path for path in output_dir.rglob("*.md") if path.is_file()]

@@ -3,21 +3,11 @@
 from typing import Any
 
 from agent.contracts import AgentContextMessage, AgentTurnContext
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 
 def build_langchain_messages(context: AgentTurnContext, max_history_messages: int) -> list[Any]:
     """Build LangChain messages without duplicating the triggering user message."""
-
-    try:
-        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-    except ImportError as exc:
-        from src.core.exceptions import AppException
-
-        raise AppException(
-            500,
-            "AGENT_LANGCHAIN_NOT_INSTALLED",
-            "缺少 langchain-core 依赖，请先安装 backend/requirements.txt。",
-        ) from exc
 
     messages: list[Any] = []
     trigger_text = normalize_user_text(context.user_message_text)

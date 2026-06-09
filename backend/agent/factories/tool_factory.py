@@ -13,8 +13,8 @@ from agent.tools.recipe_formatter import format_recipe_plan
 from agent.tools.user_memory import build_user_memory_search_tool
 from agent.tools.weather import build_weather_tool
 from agent.tools.web_search import build_web_search_tool
+from langchain_mcp_adapters.client import MultiServerMCPClient
 from src.core.config import Settings, get_settings
-from src.core.exceptions import AppException
 from src.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -54,15 +54,6 @@ def build_tools(
 
 
 async def _load_mcp_tools(server_config: dict[str, dict[str, Any]]) -> list[Any]:
-    try:
-        from langchain_mcp_adapters.client import MultiServerMCPClient
-    except ImportError as exc:
-        raise AppException(
-            500,
-            "AGENT_MCP_ADAPTER_NOT_INSTALLED",
-            "Missing langchain-mcp-adapters dependency. Install backend/requirements.txt first.",
-        ) from exc
-
     client = MultiServerMCPClient(server_config)
     return await client.get_tools()
 

@@ -5,6 +5,10 @@ from typing import Any, Literal
 
 from agent.contracts import ActionIntent, AgentTurnContext
 from agent.factories.model_factory import build_chat_model
+from agent.prompts.system_prompts import (
+    build_intent_model_system_prompt,
+    build_intent_model_user_prompt,
+)
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 from src.core.config import AgentModelCandidate, Settings, get_settings
@@ -163,11 +167,24 @@ class LocalModelIntentClassifier:
 
         try:
             model = build_chat_model(self.settings, model_config, temperature=0.0)
-            structured_model = model.with_structured_output(ModelIntentResult)
+            structured_model = model.with_structured_output(
+                ModelIntentResult,
+                method=(
+                    "json_mode"
+                    if model_config.provider == "local"
+                    else "json_schema"
+                ),
+            )
+            system_prompt = build_intent_model_system_prompt()
+            if model_config.provider == "local":
+                system_prompt += (
+                    "\nReturn only a valid JSON object with intent_type, confidence, "
+                    "and reason."
+                )
             response = structured_model.invoke(
                 [
-                    SystemMessage(content=_intent_model_system_prompt()),
-                    HumanMessage(content=_build_intent_model_prompt(context)),
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=build_intent_model_user_prompt(context)),
                 ]
             )
             result = _normalize_model_result(response)
@@ -352,28 +369,6 @@ def _build_model_unavailable_reason(
         f"{rule_prediction.reason} 本地模型意图识别不可用，已降级使用规则结果。"
         f"模型状态：{model_prediction.reason}{error_detail}"
     )
-
-
-def _intent_model_system_prompt() -> str:
-    return "\n".join(
-        [
-            "你是 CookingAgent 的本地高层动作意图分类器。",
-            "只判断用户这一轮想触发哪类系统动作，不回答用户问题。",
-            "可选 intent_type：",
-            "answer：普通问答、菜谱咨询、闲聊、RAG 问答或不确定场景。",
-            "attachment_parse：用户要求读取、解析、提取、总结本轮附件内容。",
-            "document_ingest：用户要求把本轮附件写入知识库、入库、向量化或以后可检索。",
-            "memory_update：用户明确表达长期偏好、忌口、厨具、健康目标或要求记住信息。",
-            "不要因为问题涉及菜谱就选择 document_ingest；没有明确系统动作时选择 answer。",
-            "confidence 表示你对分类的把握，范围 0 到 1；reason 用简短中文说明。",
-        ]
-    )
-
-
-def _build_intent_model_prompt(context: AgentTurnContext) -> str:
-    attachment_state = "有附件" if context.attachment_public_ids else "无附件"
-    message_text = (context.user_message_text or "").strip()
-    return f"附件状态：{attachment_state}\n用户输入：{message_text}"
 
 
 def _normalize_model_result(response: Any) -> ModelIntentResult:

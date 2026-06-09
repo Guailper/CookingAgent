@@ -47,6 +47,7 @@ class AttachmentIngestRetryItem(BaseModel):
     """Retry result returned to the workspace after synchronous ingestion."""
 
     attachment: AttachmentItem
+    assistant_message: dict[str, Any]
     indexed_documents: list[dict[str, Any]]
     skipped_documents: list[dict[str, Any]]
 

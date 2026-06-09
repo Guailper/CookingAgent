@@ -1,6 +1,7 @@
 """Tests for the Milvus RAG module without external network calls."""
 
 import sys
+import subprocess
 import tempfile
 import types
 import unittest
@@ -145,6 +146,20 @@ class _HybridRepository:
 
 
 class RagModuleTests(unittest.TestCase):
+    def test_embedding_client_can_be_imported_before_agent_package(self) -> None:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from src.rag.embedding_client import EmbeddingClient",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_text_chunker_keeps_chunks_under_max_size(self) -> None:
         chunker = TextChunker(target_size=40, max_size=60, overlap_size=10)
         text = "第一段介绍食材。\n\n" + "鸡蛋炒饭需要快速翻炒。" * 8
@@ -416,6 +431,25 @@ class RagModuleTests(unittest.TestCase):
 
         self.assertEqual([operation for operation, _ in calls], ["delete", "insert"])
         self.assertIn('document_public_id == "att_retry"', calls[0][1]["filter"])
+
+    def test_milvus_repository_deletes_existing_document_chunks(self) -> None:
+        calls = []
+
+        class _DeleteClient:
+            def has_collection(self, collection_name):
+                return True
+
+            def delete(self, **kwargs):
+                calls.append(kwargs)
+
+        repository = MilvusRagRepository(SimpleNamespace(milvus_collection="rag_chunks"))
+        repository._client = _DeleteClient()
+
+        deleted = repository.delete_document("cookbook", "att_resume")
+
+        self.assertTrue(deleted)
+        self.assertIn('knowledge_base_public_id == "cookbook"', calls[0]["filter"])
+        self.assertIn('document_public_id == "att_resume"', calls[0]["filter"])
 
     def test_retriever_fuses_vector_and_keyword_recall_before_rerank(self) -> None:
         settings = SimpleNamespace(

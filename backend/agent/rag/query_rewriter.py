@@ -5,6 +5,8 @@ from typing import Any
 from agent.contracts import AgentTurnContext
 from agent.factories.model_factory import build_chat_model
 from agent.prompts.system_prompts import _build_rewrite_prompt as build_rewrite_prompt
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
 from src.core.config import Settings, get_settings
 from src.core.logging import get_logger
 
@@ -78,9 +80,6 @@ def _resolve_history_limit(context: AgentTurnContext) -> int:
 
 def _build_rewrite_chain(model: Any) -> Any:
     """Build a small LangChain Runnable for query rewriting."""
-
-    from langchain_core.output_parsers import StrOutputParser
-    from langchain_core.prompts import ChatPromptTemplate
 
     prompt_template = ChatPromptTemplate.from_messages([("human", "{prompt}")])
     return prompt_template | model | StrOutputParser()

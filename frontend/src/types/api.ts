@@ -61,6 +61,7 @@ export type ApiAttachmentItem = {
 export type ApiAttachmentUploadResponse = ApiEnvelope<ApiAttachmentItem[]>;
 export type ApiAttachmentIngestRetryResponse = ApiEnvelope<{
   attachment: ApiAttachmentItem;
+  assistant_message: ApiMessageItem;
   indexed_documents: Array<Record<string, unknown>>;
   skipped_documents: Array<Record<string, unknown>>;
 }>;

@@ -103,6 +103,27 @@ class MilvusRagRepository:
             data=rows,
         )
 
+    def delete_document(
+        self,
+        knowledge_base_public_id: str,
+        document_public_id: str,
+    ) -> bool:
+        """Delete all chunks for one document when it is no longer eligible."""
+
+        client = self._get_client()
+        collection_name = self.settings.milvus_collection
+        if not client.has_collection(collection_name):
+            return False
+
+        client.delete(
+            collection_name=collection_name,
+            filter=self._build_document_filter(
+                knowledge_base_public_id,
+                document_public_id,
+            ),
+        )
+        return True
+
     def search(
         self,
         query_embedding: list[float],

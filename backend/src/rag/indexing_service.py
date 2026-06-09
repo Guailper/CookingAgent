@@ -66,6 +66,17 @@ class RagIndexingService:
         self.repository.upsert_chunks(records)
         return len(records)
 
+    def delete_document(
+        self,
+        knowledge_base_public_id: str,
+        document_public_id: str,
+    ) -> bool:
+        """Remove a document that no longer passes ingestion validation."""
+
+        return self.repository.delete_document(
+            knowledge_base_public_id,
+            document_public_id,
+        )
+
     def _new_chunk_public_id(self) -> str:
         return f"rag_chunk_{uuid4().hex}"
-

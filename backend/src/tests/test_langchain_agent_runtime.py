@@ -1,7 +1,5 @@
 """Tests for the LangChain-backed agent runtime."""
 
-import sys
-import types
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -802,9 +800,6 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
         self.assertEqual(result.output_snapshot["primary_failure_code"], "AGENT_UPSTREAM_FAILED")
 
     def test_runner_invokes_langchain_create_agent(self) -> None:
-        fake_agents_module = types.ModuleType("langchain.agents")
-        fake_langchain_module = types.ModuleType("langchain")
-
         class _FakeCompiledAgent:
             def __init__(self) -> None:
                 self.invoked_payload = None
@@ -826,15 +821,9 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
             self.assertIn("CookingAgent", system_prompt)
             return compiled_agent
 
-        fake_agents_module.create_agent = create_agent
-        fake_langchain_module.agents = fake_agents_module
-
-        with patch.dict(
-            sys.modules,
-            {
-                "langchain": fake_langchain_module,
-                "langchain.agents": fake_agents_module,
-            },
+        with patch(
+            "agent.runner.create_agent",
+            side_effect=create_agent,
         ), patch(
             "agent.runner.build_chat_model",
             return_value="fake-model",
@@ -851,9 +840,6 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
         self.assertEqual(compiled_agent.invoked_payload["messages"], ["fake-message"])
 
     def test_runner_tries_next_model_candidate_after_failure(self) -> None:
-        fake_agents_module = types.ModuleType("langchain.agents")
-        fake_langchain_module = types.ModuleType("langchain")
-
         class _FakeCompiledAgent:
             def __init__(self, model):
                 self.model = model
@@ -874,8 +860,6 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
             _ = system_prompt
             return _FakeCompiledAgent(model)
 
-        fake_agents_module.create_agent = create_agent
-        fake_langchain_module.agents = fake_agents_module
         settings = self._settings(
             agent_model_candidates=[
                 AgentModelCandidate(
@@ -893,12 +877,9 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
             ]
         )
 
-        with patch.dict(
-            sys.modules,
-            {
-                "langchain": fake_langchain_module,
-                "langchain.agents": fake_agents_module,
-            },
+        with patch(
+            "agent.runner.create_agent",
+            side_effect=create_agent,
         ), patch(
             "agent.runner.build_chat_model",
             side_effect=["primary-model", "backup-model"],
@@ -926,9 +907,6 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
         )
 
     def test_runner_tries_next_model_candidate_after_empty_response(self) -> None:
-        fake_agents_module = types.ModuleType("langchain.agents")
-        fake_langchain_module = types.ModuleType("langchain")
-
         class _FakeCompiledAgent:
             def __init__(self, model):
                 self.model = model
@@ -948,8 +926,6 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
             _ = system_prompt
             return _FakeCompiledAgent(model)
 
-        fake_agents_module.create_agent = create_agent
-        fake_langchain_module.agents = fake_agents_module
         settings = self._settings(
             agent_model_candidates=[
                 AgentModelCandidate(
@@ -967,12 +943,9 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
             ]
         )
 
-        with patch.dict(
-            sys.modules,
-            {
-                "langchain": fake_langchain_module,
-                "langchain.agents": fake_agents_module,
-            },
+        with patch(
+            "agent.runner.create_agent",
+            side_effect=create_agent,
         ), patch(
             "agent.runner.build_chat_model",
             side_effect=["primary-model", "backup-model"],
@@ -1029,7 +1002,6 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
             def __init__(self, **kwargs):
                 captured_kwargs.update(kwargs)
 
-        fake_langchain_openai = types.SimpleNamespace(ChatOpenAI=_FakeChatOpenAI)
         settings = self._settings(
             agent_model_provider="kimi",
             agent_model_base_url="https://api.moonshot.cn/v1",
@@ -1039,13 +1011,49 @@ class LangChainAgentRuntimeTests(unittest.TestCase):
             agent_disable_reasoning=True,
         )
 
-        with patch.dict(sys.modules, {"langchain_openai": fake_langchain_openai}):
+        with patch(
+            "agent.factories.model_factory.ChatOpenAI",
+            side_effect=_FakeChatOpenAI,
+        ):
             build_chat_model(settings, temperature=0.0)
 
         self.assertEqual(captured_kwargs["model"], "kimi-k2.5")
         self.assertEqual(captured_kwargs["temperature"], 0.6)
         self.assertEqual(captured_kwargs["extra_body"], {"thinking": {"type": "disabled"}})
         self.assertNotIn("model_kwargs", captured_kwargs)
+
+    def test_local_chat_model_disables_reasoning_and_retries(self) -> None:
+        captured_kwargs = {}
+
+        class _FakeChatOpenAI:
+            def __init__(self, **kwargs):
+                captured_kwargs.update(kwargs)
+
+        settings = self._settings(
+            agent_model_provider="local",
+            agent_model_base_url="http://127.0.0.1:11434/v1",
+            agent_model_api_key="not-needed",
+            agent_model_name="qwen3.5:0.8b",
+        )
+
+        with patch(
+            "agent.factories.model_factory.ChatOpenAI",
+            side_effect=_FakeChatOpenAI,
+        ), patch(
+            "agent.factories.model_factory.httpx.Client",
+            return_value="sync-no-proxy-client",
+        ) as sync_client, patch(
+            "agent.factories.model_factory.httpx.AsyncClient",
+            return_value="async-no-proxy-client",
+        ) as async_client:
+            build_chat_model(settings, temperature=0.0)
+
+        self.assertEqual(captured_kwargs["reasoning_effort"], "none")
+        self.assertEqual(captured_kwargs["max_retries"], 0)
+        self.assertEqual(captured_kwargs["http_client"], "sync-no-proxy-client")
+        self.assertEqual(captured_kwargs["http_async_client"], "async-no-proxy-client")
+        sync_client.assert_called_once_with(trust_env=False)
+        async_client.assert_called_once_with(trust_env=False)
 
     def test_settings_prefers_kimi_specific_model_config(self) -> None:
         env = {

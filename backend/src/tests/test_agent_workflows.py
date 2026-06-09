@@ -35,6 +35,7 @@ from src.services.attachment_content_validation_service import (
 )
 from src.services.conversation_summary_service import ConversationSummaryService
 from src.services.file_service import FileService
+from src.services.message_service import MessageService
 
 
 class _FakeUploadFile:
@@ -231,7 +232,7 @@ class AgentWorkflowTests(unittest.TestCase):
         )
 
     def _intent(self, context: AgentTurnContext):
-        return ActionIntentResolver().resolve(context)
+        return ActionIntentResolver(settings=self._settings()).resolve(context)
 
     @staticmethod
     def _run_async(coro):
@@ -296,7 +297,7 @@ class AgentWorkflowTests(unittest.TestCase):
         return conversation
 
     def test_intent_resolver_routes_side_effect_workflows(self) -> None:
-        resolver = ActionIntentResolver()
+        resolver = ActionIntentResolver(settings=self._settings())
 
         ingest = resolver.resolve(self._context("请把这个文件加入知识库", ["att_1"]))
         parse = resolver.resolve(self._context("解析这个附件", ["att_1"]))
@@ -347,6 +348,40 @@ class AgentWorkflowTests(unittest.TestCase):
         self.assertEqual(intent.intent_type, "memory_update")
         self.assertEqual(intent.source, "rule")
         self.assertIn("降级使用规则结果", intent.reason)
+
+    def test_local_intent_classifier_uses_json_mode_structured_output(self) -> None:
+        structured_model = Mock()
+        structured_model.invoke.return_value = {
+            "intent_type": "document_ingest",
+            "confidence": 0.95,
+            "reason": "The user explicitly requested ingestion.",
+        }
+        model = Mock()
+        model.with_structured_output.return_value = structured_model
+        settings = self._settings(
+            intent_model_provider="local",
+            intent_model_base_url="http://127.0.0.1:11434/v1",
+            intent_model_api_key="not-needed",
+            intent_model_name="qwen3.5:0.8b",
+        )
+
+        with patch(
+            "agent.orchestration.intent_resolver.build_chat_model",
+            return_value=model,
+        ):
+            intent = ActionIntentResolver(settings=settings).resolve(
+                self._context("请把这个文件加入知识库", ["att_1"])
+            )
+
+        self.assertEqual(
+            model.with_structured_output.call_args.kwargs["method"],
+            "json_mode",
+        )
+        self.assertIn(
+            "valid JSON",
+            structured_model.invoke.call_args.args[0][0].content,
+        )
+        self.assertEqual(intent.intent_type, "document_ingest")
 
     def test_intent_resolver_requires_rule_confirmation_for_attachment_side_effects(self) -> None:
         resolver = ActionIntentResolver(
@@ -420,6 +455,28 @@ class AgentWorkflowTests(unittest.TestCase):
             self.assertIn("番茄炒蛋", parse_result.raw_text)
             self.assertEqual(parse_result.parser_name, "mineru_cli")
             self.assertEqual(parse_result.structured_result["parser_name"], "mineru_cli")
+        finally:
+            db.close()
+
+    def test_attachment_parse_service_bypasses_proxy_for_mineru_local_api(self) -> None:
+        db = self.SessionLocal()
+        try:
+            completed_process = SimpleNamespace(returncode=0, stdout="", stderr="")
+            with patch(
+                "src.services.attachment_parse_service.get_settings",
+                return_value=self._settings(),
+            ), patch(
+                "src.services.attachment_parse_service.subprocess.run",
+                return_value=completed_process,
+            ) as run:
+                service = AttachmentParseWorkflow(db).parse_service
+                service._run_mineru(Path("input.pdf"), Path("output"))
+
+            subprocess_env = run.call_args.kwargs["env"]
+            self.assertIn("127.0.0.1", subprocess_env["NO_PROXY"])
+            self.assertIn("localhost", subprocess_env["NO_PROXY"])
+            self.assertEqual(subprocess_env["NO_PROXY"], subprocess_env["no_proxy"])
+            self.assertEqual(subprocess_env["MINERU_MODEL_SOURCE"], "local")
         finally:
             db.close()
 
@@ -546,7 +603,9 @@ class AgentWorkflowTests(unittest.TestCase):
             parse_result = db.query(ParseResult).one()
             index_document.assert_not_called()
             self.assertEqual(parse_result.embedding_status, "rejected")
-            self.assertIn("主题分类模型未确认", result.reply_text)
+            self.assertIn("附件内容检测未通过", result.reply_text)
+            self.assertIn("文档主体为经营报告", result.reply_text)
+            self.assertIn("请重新上传", result.reply_text)
             self.assertEqual(
                 result.output_snapshot["skipped_documents"][0]["reason"],
                 "irrelevant_content",
@@ -569,8 +628,9 @@ class AgentWorkflowTests(unittest.TestCase):
                 )
 
         class _FakeModel:
-            def with_structured_output(self, schema):
+            def with_structured_output(self, schema, **kwargs):
                 self.schema = schema
+                self.structured_output_kwargs = kwargs
                 return _FakeStructuredModel()
 
         build_model = Mock(return_value=_FakeModel())
@@ -607,6 +667,42 @@ class AgentWorkflowTests(unittest.TestCase):
         self.assertEqual(validation.status, CONTENT_VALIDATION_STATUS_FAILED)
         self.assertEqual(validation.error_message, "validation model timeout")
 
+    def test_local_content_validation_uses_json_mode_structured_output(self) -> None:
+        structured_model = Mock()
+        structured_model.invoke.return_value = ContentValidationModelResult(
+            accepted=True,
+            category="cooking_related",
+            confidence=0.95,
+            reason="Reusable cooking instructions.",
+        )
+        model = Mock()
+        model.with_structured_output.return_value = structured_model
+        settings = self._settings(
+            content_validation_model_provider="local",
+            content_validation_model_base_url="http://127.0.0.1:11434/v1",
+            content_validation_model_api_key="not-needed",
+            content_validation_model_name="qwen3.5:0.8b",
+        )
+
+        with patch(
+            "src.services.attachment_content_validation_service.build_chat_model",
+            return_value=model,
+        ):
+            validation = AttachmentContentValidationService(settings).validate(
+                title="recipe.txt",
+                text="Cook eggs, then add tomatoes.",
+            )
+
+        self.assertEqual(
+            model.with_structured_output.call_args.kwargs["method"],
+            "json_mode",
+        )
+        self.assertIn(
+            "valid JSON",
+            structured_model.invoke.call_args.args[0][0].content,
+        )
+        self.assertTrue(validation.accepted)
+
     def test_content_validation_service_rejects_low_confidence_related_result(self) -> None:
         class _LowConfidenceStructuredModel:
             def invoke(self, messages):
@@ -619,8 +715,9 @@ class AgentWorkflowTests(unittest.TestCase):
                 )
 
         class _LowConfidenceModel:
-            def with_structured_output(self, schema):
+            def with_structured_output(self, schema, **kwargs):
                 _ = schema
+                _ = kwargs
                 return _LowConfidenceStructuredModel()
 
         with patch(
@@ -635,6 +732,108 @@ class AgentWorkflowTests(unittest.TestCase):
         self.assertFalse(validation.accepted)
         self.assertEqual(validation.category, "uncertain")
         self.assertIn("置信度不足", validation.reason)
+
+    def test_content_validation_service_rejects_resume_structure_before_model_result(self) -> None:
+        structured_model = Mock()
+        structured_model.invoke.return_value = ContentValidationModelResult(
+            accepted=True,
+            category="cooking_related",
+            confidence=0.95,
+            reason="文档提到了菜谱 Agent。",
+        )
+        model = Mock()
+        model.with_structured_output.return_value = structured_model
+
+        with patch(
+            "src.services.attachment_content_validation_service.build_chat_model",
+            return_value=model,
+        ) as build_model:
+            validation = AttachmentContentValidationService(self._settings()).validate(
+                title="document.pdf",
+                text=(
+                    "## 教育背景\n软件工程\n"
+                    "## 项目经历\n基于 RAG 的智能菜谱 Agent 平台\n"
+                    "## 获奖经历\n优秀毕业生\n"
+                    "## 个人技能\n熟悉 Python 与 FastAPI"
+                ),
+            )
+
+        build_model.assert_not_called()
+        self.assertFalse(validation.accepted)
+        self.assertEqual(validation.category, "irrelevant")
+        self.assertIn("简历结构", validation.reason)
+
+    def test_document_ingest_rejection_removes_previously_indexed_chunks(self) -> None:
+        db = self.SessionLocal()
+        attachment = self._create_attachment(db, "resume.pdf", "fake pdf bytes")
+        delete_document = Mock(return_value=True)
+        fake_indexing_service = SimpleNamespace(
+            index_document=Mock(return_value=1),
+            delete_document=delete_document,
+        )
+
+        try:
+            with patch(
+                "src.services.attachment_parse_service.get_settings",
+                return_value=self._settings(),
+            ), patch(
+                "src.services.attachment_parse_service.subprocess.run",
+                side_effect=self._fake_mineru_run("教育背景、项目经历、个人技能"),
+            ):
+                result = DocumentIngestWorkflow(
+                    db,
+                    settings=self._settings(),
+                    indexing_service=fake_indexing_service,
+                    content_validation_service=self._content_validation_service(
+                        accepted=False,
+                        category="irrelevant",
+                        confidence=0.99,
+                        reason="文档主体为个人简历。",
+                    ),
+                ).run(
+                    self._context("请重新入库", [attachment.public_id]),
+                    self._intent(self._context("请重新入库", [attachment.public_id])),
+                )
+
+            delete_document.assert_called_once_with("cookbook", attachment.public_id)
+            self.assertEqual(
+                result.output_snapshot["skipped_documents"][0]["reason"],
+                "irrelevant_content",
+            )
+        finally:
+            db.close()
+
+    def test_message_service_persists_ingest_retry_result_as_assistant_message(self) -> None:
+        db = self.SessionLocal()
+        attachment = self._create_attachment(db, "resume.pdf", "fake pdf bytes")
+        content = (
+            "附件内容检测未通过：正文检测到明确的简历结构，不属于烹饪知识资料。"
+            "请重新上传菜谱、菜单、食材清单或做菜相关资料。"
+        )
+
+        try:
+            with patch(
+                "src.services.message_service.get_settings",
+                return_value=self._settings(redis_key_prefix="test"),
+            ):
+                message = MessageService(db).create_assistant_message(
+                    user=attachment.conversation.user,
+                    conversation_public_id=attachment.conversation.public_id,
+                    content=content,
+                    extra_metadata={
+                        "reply_type": "workflow_notice",
+                        "workflow_name": "document_ingest_workflow",
+                        "source": "attachment_ingest_retry",
+                        "attachment_public_id": attachment.public_id,
+                    },
+                )
+
+            self.assertEqual(message.role, "assistant")
+            self.assertEqual(message.content, content)
+            self.assertEqual(message.extra_metadata["source"], "attachment_ingest_retry")
+            self.assertEqual(message.extra_metadata["attachment_public_id"], attachment.public_id)
+        finally:
+            db.close()
 
     def test_document_ingest_workflow_keeps_validation_failure_retryable(self) -> None:
         db = self.SessionLocal()

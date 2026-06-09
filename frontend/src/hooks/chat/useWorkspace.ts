@@ -425,6 +425,13 @@ export function useWorkspace({ user, onUnauthorized }: UseWorkspaceOptions) {
 
     try {
       const result = await retryRemoteAttachmentIngestion(attachmentId);
+      setConversations((currentConversations) =>
+        currentConversations.map((conversation) =>
+          conversation.id === activeConversationId
+            ? mergeMessagesIntoConversation(conversation, [result.assistantMessage])
+            : conversation,
+        ),
+      );
       const refreshedConversation = await getRemoteConversation(activeConversationId);
       setConversations((currentConversations) =>
         upsertConversation(currentConversations, refreshedConversation),

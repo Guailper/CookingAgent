@@ -14,6 +14,7 @@ from agent.output.normalizer import (
     extract_stream_delta,
 )
 from agent.prompts.system_prompts import build_system_prompt
+from langchain.agents import create_agent
 from src.core.config import AgentModelCandidate, Settings, get_settings
 from src.core.exceptions import AppException
 from src.core.logging import get_logger
@@ -34,15 +35,6 @@ class LangChainAgentRunner:
 
     def run(self, context: AgentTurnContext) -> AgentTurnResult:
         """Invoke the LangChain agent and normalize its response."""
-
-        try:
-            from langchain.agents import create_agent
-        except ImportError as exc:
-            raise AppException(
-                500,
-                "AGENT_LANGCHAIN_NOT_INSTALLED",
-                "Missing langchain dependency. Install backend/requirements.txt first.",
-            ) from exc
 
         tools = build_tools(context, self.settings)
         messages = build_langchain_messages(
@@ -129,15 +121,6 @@ class LangChainAgentRunner:
 
     def stream(self, context: AgentTurnContext):
         """Stream one LangChain agent turn and return the final normalized result."""
-
-        try:
-            from langchain.agents import create_agent
-        except ImportError as exc:
-            raise AppException(
-                500,
-                "AGENT_LANGCHAIN_NOT_INSTALLED",
-                "Missing langchain dependency. Install backend/requirements.txt first.",
-            ) from exc
 
         tools = build_tools(context, self.settings)
         messages = build_langchain_messages(

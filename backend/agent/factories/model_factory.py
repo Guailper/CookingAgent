@@ -2,6 +2,8 @@
 
 from typing import Any
 
+import httpx
+from langchain_openai import ChatOpenAI
 from src.core.config import AgentModelCandidate, Settings
 from src.core.exceptions import AppException
 
@@ -53,20 +55,20 @@ def build_chat_model(
             "智能体模型缺少 base URL 或 API key 配置。",
         )
 
-    try:
-        from langchain_openai import ChatOpenAI
-    except ImportError as exc:
-        raise AppException(
-            500,
-            "AGENT_LANGCHAIN_NOT_INSTALLED",
-            "缺少 langchain-openai 依赖，请先安装 backend/requirements.txt。",
-        ) from exc
-
     extra_body: dict[str, Any] = {}
     if _should_disable_reasoning(settings, provider, model_name):
         # Kimi K2.5 的 thinking 是 Moonshot 请求体字段；通过 extra_body 传递，
         # 避免 LangChain/OpenAI SDK 把它当成未知标准参数处理。
         extra_body["thinking"] = {"type": "disabled"}
+
+    local_request_options: dict[str, Any] = {}
+    if provider == "local":
+        local_request_options = {
+            "reasoning_effort": "none",
+            "max_retries": 0,
+            "http_client": httpx.Client(trust_env=False),
+            "http_async_client": httpx.AsyncClient(trust_env=False),
+        }
 
     return ChatOpenAI(
         model=model_name,
@@ -80,6 +82,7 @@ def build_chat_model(
         ),
         timeout=settings.agent_request_timeout_seconds,
         extra_body=extra_body or None,
+        **local_request_options,
     )
 
 

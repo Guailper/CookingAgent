@@ -3,6 +3,11 @@
 from typing import Any
 
 from agent.factories.model_factory import build_chat_model
+from agent.prompts.system_prompts import (
+    build_conversation_summary_system_prompt,
+    build_conversation_summary_user_prompt,
+)
+from langchain_core.messages import HumanMessage, SystemMessage
 from src.core.config import AgentModelCandidate, Settings, get_settings
 from src.core.constants import MESSAGE_ROLE_ASSISTANT, MESSAGE_ROLE_SYSTEM, MESSAGE_ROLE_USER
 from src.core.logging import get_logger
@@ -105,20 +110,14 @@ class ConversationSummaryService:
         messages: list[Message],
     ) -> str:
         try:
-            from langchain_core.messages import HumanMessage, SystemMessage
-        except ImportError as exc:
-            logger.warning("Conversation summary skipped because langchain-core is missing.", exc_info=exc)
-            return ""
-
-        try:
             model = build_chat_model(self.settings, self._resolve_model_candidate())
             response = model.invoke(
                 [
-                    SystemMessage(content=self._summary_system_prompt()),
+                    SystemMessage(content=build_conversation_summary_system_prompt()),
                     HumanMessage(
-                        content=self._summary_user_prompt(
+                        content=build_conversation_summary_user_prompt(
                             existing_summary_text=existing_summary_text,
-                            messages=messages,
+                            rendered_messages=self._render_messages(messages),
                         )
                     ),
                 ]
@@ -141,43 +140,8 @@ class ConversationSummaryService:
             return candidate.model_name
         return self.settings.agent_model_name or None
 
-    @staticmethod
-    def _summary_system_prompt() -> str:
-        return "\n".join(
-            [
-                "你是 CookingAgent 的会话摘要器，只能根据提供的旧摘要和新增消息更新摘要。",
-                "不要补充用户没有明确说过的偏好、食材、设备或限制。",
-                "摘要要服务后续做菜问答，保留目标、约束、已给方案、用户否定内容和待继续问题。",
-                "删除问候、寒暄、重复内容、已过期的一次性细节和无关闲聊。",
-                "输出中文 Markdown，控制在 300 到 600 字。",
-            ]
-        )
-
-    def _summary_user_prompt(
-        self,
-        *,
-        existing_summary_text: str,
-        messages: list[Message],
-    ) -> str:
-        existing_summary = existing_summary_text.strip() or "暂无。"
-        rendered_messages = "\n\n".join(self._render_message(message) for message in messages)
-        return "\n".join(
-            [
-                "请基于旧摘要和新增消息，输出更新后的完整会话摘要。",
-                "",
-                "旧摘要：",
-                existing_summary,
-                "",
-                "新增消息：",
-                rendered_messages,
-                "",
-                "请按以下结构输出：",
-                "当前目标：",
-                "已确认约束：",
-                "已给方案：",
-                "待继续：",
-            ]
-        )
+    def _render_messages(self, messages: list[Message]) -> str:
+        return "\n\n".join(self._render_message(message) for message in messages)
 
     @staticmethod
     def _render_message(message: Message) -> str:

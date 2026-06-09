@@ -579,6 +579,7 @@ export async function retryRemoteAttachmentIngestion(attachmentId: string) {
   return {
     message: response.message,
     attachment: mapApiAttachment(response.data.attachment),
+    assistantMessage: mapApiMessage(response.data.assistant_message),
   };
 }
 

@@ -14,7 +14,9 @@ from src.schemas.file import (
     AttachmentItem,
     AttachmentUploadResponse,
 )
+from src.schemas.message import MessageItem
 from src.services.file_service import FileService
+from src.services.message_service import MessageService
 
 router = APIRouter()
 
@@ -100,12 +102,27 @@ async def retry_attachment_ingestion(
             reason="用户明确重试已上传附件的入库处理。",
         ),
     )
+    assistant_message = MessageService(db).create_assistant_message(
+        user=current_user,
+        conversation_public_id=conversation.public_id,
+        content=result.reply_text,
+        extra_metadata={
+            "reply_type": "workflow_notice",
+            "intent_type": result.intent_type,
+            "workflow_name": result.workflow_name,
+            "source": "attachment_ingest_retry",
+            "attachment_public_id": attachment.public_id,
+            "indexed_documents": result.output_snapshot.get("indexed_documents", []),
+            "skipped_documents": result.output_snapshot.get("skipped_documents", []),
+        },
+    )
     refreshed_attachment, _ = file_service.get_owned_attachment(current_user, attachment_id)
     snapshot = result.output_snapshot
     return AttachmentIngestRetryResponse(
         message=result.reply_text,
         data=AttachmentIngestRetryItem(
             attachment=AttachmentItem.model_validate(refreshed_attachment),
+            assistant_message=MessageItem.model_validate(assistant_message).model_dump(mode="json"),
             indexed_documents=snapshot.get("indexed_documents", []),
             skipped_documents=snapshot.get("skipped_documents", []),
         ),

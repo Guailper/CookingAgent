@@ -5,6 +5,7 @@ from typing import Any
 
 from agent.contracts import ActionIntent, AgentTurnContext, AgentTurnResult
 from agent.factories.model_factory import build_chat_model
+from agent.prompts.system_prompts import build_memory_extraction_system_prompt
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -169,7 +170,7 @@ class MemoryUpdateWorkflow:
             structured_model = model.with_structured_output(MemoryExtractionResult)
             response = structured_model.invoke(
                 [
-                    SystemMessage(content=_memory_extraction_system_prompt()),
+                    SystemMessage(content=build_memory_extraction_system_prompt()),
                     HumanMessage(content=normalized_text),
                 ]
             )
@@ -219,18 +220,6 @@ class MemoryUpdateWorkflow:
             "content": item.content,
             "confidence": item.confidence,
         }
-
-
-def _memory_extraction_system_prompt() -> str:
-    return "\n".join(
-        [
-            "你是 CookingAgent 的长期记忆抽取器。",
-            "只保存用户明确希望长期记住、或明显会影响后续做菜建议的信息。",
-            "可保存的信息包括：忌口、过敏、口味偏好、常用厨具、健康目标、家庭成员长期约束。",
-            "不要保存一次性问题、寒暄、临时菜单、模型回答内容或你推测出来的信息。",
-            "content 使用简洁中文，保留用户原意；无法确认时返回空 memories。",
-        ]
-    )
 
 
 def _normalize_structured_memories(response: Any) -> list[ExtractedMemory]:

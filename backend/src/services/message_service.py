@@ -11,6 +11,7 @@ from src.cache.cache_service import CacheService
 from src.core.config import get_settings
 from src.core.constants import (
     INPUT_SOURCE_KEYBOARD,
+    MESSAGE_ROLE_ASSISTANT,
     MESSAGE_ROLE_USER,
     MESSAGE_STATUS_COMPLETED,
     MESSAGE_TYPE_TEXT,
@@ -96,6 +97,54 @@ class MessageService:
             raise AppException(500, "MESSAGE_LOAD_FAILED", "消息创建成功，但回读消息失败。")
 
         return bound_message
+
+    def create_assistant_message(
+        self,
+        *,
+        user: User,
+        conversation_public_id: str,
+        content: str,
+        extra_metadata: Mapping[str, Any] | None = None,
+    ) -> Message:
+        """Persist a workflow-generated assistant notice in an owned conversation."""
+
+        conversation = self.conversation_repository.get_by_public_id_and_user_id(
+            conversation_public_id,
+            user.id,
+        )
+        if conversation is None:
+            raise AppException(404, "CONVERSATION_NOT_FOUND", "未找到对应会话。")
+
+        normalized_content = content.strip()
+        if not normalized_content:
+            raise AppException(400, "EMPTY_MESSAGE_CONTENT", "助手消息内容不能为空。")
+
+        message = Message(
+            public_id=generate_public_id("msg"),
+            conversation_id=conversation.id,
+            user_id=None,
+            role=MESSAGE_ROLE_ASSISTANT,
+            message_type=MESSAGE_TYPE_TEXT,
+            content=normalized_content,
+            status=MESSAGE_STATUS_COMPLETED,
+            extra_metadata=dict(extra_metadata or {}),
+        )
+        conversation.latest_message_at = datetime.utcnow()
+        self.message_repository.create(message)
+        self.db.commit()
+        self._invalidate_message_related_cache(
+            user_id=user.id,
+            conversation_public_id=conversation_public_id,
+        )
+
+        persisted_message = self.message_repository.get_by_id(message.id)
+        if persisted_message is None:
+            raise AppException(
+                500,
+                "ASSISTANT_MESSAGE_LOAD_FAILED",
+                "助手消息保存成功，但回读失败。",
+            )
+        return persisted_message
 
     def list_conversation_messages(self, user: User, conversation_public_id: str) -> list[Message] | list[dict]:
         """Return all messages in a conversation owned by the current user."""

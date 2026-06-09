@@ -81,6 +81,14 @@ class DocumentIngestWorkflow:
                 validation_failed = (
                     validation.status != CONTENT_VALIDATION_STATUS_COMPLETED
                 )
+                if not validation_failed:
+                    delete_document = getattr(
+                        self.indexing_service,
+                        "delete_document",
+                        None,
+                    )
+                    if callable(delete_document):
+                        delete_document(knowledge_base_id, attachment.public_id)
                 if attachment.parse_result is not None:
                     attachment.parse_result.embedding_status = (
                         EMBEDDING_STATUS_FAILED
@@ -224,12 +232,21 @@ class DocumentIngestWorkflow:
         if skipped_documents and all(
             item["reason"] == "irrelevant_content" for item in skipped_documents
         ):
-            return "附件内容经主题分类模型未确认适合烹饪知识库，未执行入库。请上传菜谱、菜单、食材清单或做菜相关资料。"
+            if len(skipped_documents) == 1:
+                reason = skipped_documents[0].get("error_message") or "内容与烹饪知识无关。"
+                return (
+                    f"附件内容检测未通过：{reason}"
+                    " 未执行入库。请重新上传符合主题的菜谱、菜单、食材清单或做菜相关资料。"
+                )
+            return (
+                f"{len(skipped_documents)} 个附件内容检测未通过，未执行入库。"
+                "请重新上传符合主题的菜谱、菜单、食材清单或做菜相关资料。"
+            )
 
         if skipped_documents and all(
             item["reason"] == "validation_failed" for item in skipped_documents
         ):
-            return "附件主题校验模型暂时不可用，未写入知识库。请稍后重试入库。"
+            return "附件主题校验暂时不可用，未写入知识库。请稍后重试入库。"
 
         if skipped_documents:
             return "没有文档成功入库。请检查附件格式、解析结果或向量库配置。"

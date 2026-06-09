@@ -33,15 +33,110 @@ def build_system_prompt(context: AgentTurnContext) -> str:
         ]
     )
 
-    def _build_rewrite_prompt(*, query: str, history: str) -> str:
-        history_section = history or "无"
-        return (
-            "你是 CookingAgent 的 RAG 查询改写器。请把用户当前输入改写成适合菜谱知识库向量检索的独立中文查询。\n"
-            "要求：只输出一行查询；保留食材、菜名、厨具、约束、份量和关键意图；不要回答问题；不要编造新条件。\n\n"
-            f"最近对话：\n{history_section}\n\n"
-            f"当前输入：{query}\n\n"
-            "改写后的检索查询："
+
+def build_intent_model_system_prompt() -> str:
+    return "\n".join(
+        [
+            "你是 CookingAgent 的本地高层动作意图分类器。",
+            "只判断用户这一轮想触发哪类系统动作，不回答用户问题。",
+            "可选 intent_type：",
+            "answer：普通问答、菜谱咨询、闲聊、RAG 问答或不确定场景。",
+            "attachment_parse：用户要求读取、解析、提取、总结本轮附件内容。",
+            "document_ingest：用户要求把本轮附件写入知识库、入库、向量化或以后可检索。",
+            "memory_update：用户明确表达长期偏好、忌口、厨具、健康目标或要求记住信息。",
+            "不要因为问题涉及菜谱就选择 document_ingest；没有明确系统动作时选择 answer。",
+            "confidence 表示你对分类的把握，范围 0 到 1；reason 用简短中文说明。",
+        ]
+    )
+
+
+def build_intent_model_user_prompt(context: AgentTurnContext) -> str:
+    attachment_state = "有附件" if context.attachment_public_ids else "无附件"
+    message_text = (context.user_message_text or "").strip()
+    return f"附件状态：{attachment_state}\n用户输入：{message_text}"
+
+
+def build_memory_extraction_system_prompt() -> str:
+    return "\n".join(
+        [
+            "你是 CookingAgent 的长期记忆抽取器。",
+            "只保存用户明确希望长期记住、或明显会影响后续做菜建议的信息。",
+            "可保存的信息包括：忌口、过敏、口味偏好、常用厨具、健康目标、家庭成员长期约束。",
+            "不要保存一次性问题、寒暄、临时菜单、模型回答内容或你推测出来的信息。",
+            "content 使用简洁中文，保留用户原意；无法确认时返回空 memories。",
+        ]
+    )
+
+
+def build_content_validation_system_prompt() -> str:
+    return "\n".join(
+        [
+            "你是 CookingAgent 知识库的附件主题分类器。",
+            "请依据文档整体语义判断它是否适合进入做饭知识库，不要按固定关键词机械判定。",
+            "cooking_related：以菜谱、烹饪方法、备菜加工、厨房技巧、食材营养或餐食规划为核心的可复用资料。",
+            "irrelevant：主题属于财务、办公、编程、文学或其他与烹饪知识无关的资料。",
+            "uncertain：文本过短、混杂主题或证据不足，无法可靠确认是否属于做饭知识。",
+            "只有 category 为 cooking_related 且你有充分把握时，accepted 才能为 true。",
+            "reason 使用简短中文说明理由。",
+        ]
+    )
+
+
+def build_content_validation_document_prompt(
+    *,
+    title: str,
+    text: str,
+    max_document_chars: int,
+) -> str:
+    normalized_title = " ".join((title or "").strip().split())
+    normalized_text = (text or "").strip()
+    if len(normalized_text) > max_document_chars:
+        head_chars = max_document_chars * 2 // 3
+        tail_chars = max_document_chars - head_chars
+        normalized_text = (
+            f"{normalized_text[:head_chars]}\n...[正文截断]...\n"
+            f"{normalized_text[-tail_chars:]}"
         )
+
+    return f"文档标题：{normalized_title}\n\n文档正文摘录：\n{normalized_text}"
+
+
+def build_conversation_summary_system_prompt() -> str:
+    return "\n".join(
+        [
+            "你是 CookingAgent 的会话摘要器，只能根据提供的旧摘要和新增消息更新摘要。",
+            "不要补充用户没有明确说过的偏好、食材、设备或限制。",
+            "摘要要服务后续做菜问答，保留目标、约束、已给方案、用户否定内容和待继续问题。",
+            "删除问候、寒暄、重复内容、已过期的一次性细节和无关闲聊。",
+            "输出中文 Markdown，控制在 300 到 600 字。",
+        ]
+    )
+
+
+def build_conversation_summary_user_prompt(
+    *,
+    existing_summary_text: str,
+    rendered_messages: str,
+) -> str:
+    existing_summary = existing_summary_text.strip() or "暂无。"
+    return "\n".join(
+        [
+            "请基于旧摘要和新增消息，输出更新后的完整会话摘要。",
+            "",
+            "旧摘要：",
+            existing_summary,
+            "",
+            "新增消息：",
+            rendered_messages,
+            "",
+            "请按以下结构输出：",
+            "当前目标：",
+            "已确认约束：",
+            "已给方案：",
+            "待继续：",
+        ]
+    )
+
 
 def _build_conversation_summary_instruction(context: AgentTurnContext) -> str:
     summary = (context.conversation_summary or "").strip()
