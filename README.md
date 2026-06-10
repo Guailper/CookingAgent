@@ -118,7 +118,7 @@ CookingAgent/
 │  │  └─ tests/              # Backend tests
 │  ├─ scripts/               # Indexing and evaluation scripts
 │  └─ requirements.txt
-├─ frontend/
+├─ apps/web/
 │  ├─ src/components/        # Auth and chat UI components
 │  ├─ src/hooks/             # Auth and workspace state
 │  ├─ src/services/          # API clients
@@ -150,7 +150,7 @@ python -m pip install -r requirements.txt
 ### 2. Install frontend dependencies
 
 ```powershell
-cd frontend
+cd apps/web
 npm install
 ```
 
@@ -178,7 +178,7 @@ Useful URLs:
 ### 5. Start frontend
 
 ```powershell
-cd frontend
+cd apps/web
 npm run dev
 ```
 
@@ -243,7 +243,7 @@ python -m pytest backend/src/tests
 Run frontend build:
 
 ```powershell
-cd frontend
+cd apps/web
 npm run build
 ```
 

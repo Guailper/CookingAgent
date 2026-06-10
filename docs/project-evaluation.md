@@ -179,7 +179,7 @@ RAG 子系统：
 
 1. 前端保存明文密码
 
-`frontend/src/services/authService.ts` 的记住登录逻辑会将邮箱和密码保存到 `localStorage`。这是生产环境不可接受的安全风险。应立即移除密码保存，只允许保存邮箱、偏好或使用安全会话机制。
+`apps/web/src/services/auth/authService.ts` 的记住登录逻辑会将邮箱和密码保存到 `localStorage`。这是生产环境不可接受的安全风险。应立即移除密码保存，只允许保存邮箱、偏好或使用安全会话机制。
 
 2. 会话令牌存储在 `localStorage`
 

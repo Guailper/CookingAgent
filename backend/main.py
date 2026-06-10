@@ -7,6 +7,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.router import api_router
 from src.core.config import get_settings
@@ -47,6 +48,14 @@ def create_application() -> FastAPI:
     )
 
     register_exception_handlers(app)
+    if settings.cors_allowed_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(settings.cors_allowed_origins),
+            allow_credentials=False,
+            allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+            allow_headers=["Authorization", "Content-Type"],
+        )
     app.include_router(api_router, prefix=settings.api_v1_prefix)
 
     @app.get("/health", summary="服务健康检查")

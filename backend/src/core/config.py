@@ -69,6 +69,16 @@ def _get_float_env(name: str, default: float) -> float:
         return default
 
 
+def _get_csv_env(name: str, default: tuple[str, ...] = ()) -> tuple[str, ...]:
+    """Read a comma-separated environment variable into non-empty values."""
+
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+
+    return tuple(value.strip() for value in raw_value.split(",") if value.strip())
+
+
 def _get_agent_provider_default() -> str:
     """根据环境变量自动推断智能体默认 provider。"""
 
@@ -378,6 +388,7 @@ class Settings:
     sqlalchemy_echo: bool
     app_secret_key: str
     access_token_expire_minutes: int
+    cors_allowed_origins: tuple[str, ...]
     smtp_host: str
     smtp_port: int
     smtp_user: str
@@ -560,6 +571,15 @@ def get_settings() -> Settings:
         access_token_expire_minutes=_get_int_env(
             "ACCESS_TOKEN_EXPIRE_MINUTES",
             ACCESS_TOKEN_EXPIRE_MINUTES,
+        ),
+        cors_allowed_origins=_get_csv_env(
+            "CORS_ALLOWED_ORIGINS",
+            (
+                "http://localhost:5173",
+                "http://127.0.0.1:5173",
+                "http://localhost:8081",
+                "http://127.0.0.1:8081",
+            ),
         ),
         smtp_host=os.getenv("SMTP_HOST", "smtp.qq.com").strip(),
         smtp_port=_get_int_env("SMTP_PORT", 465),

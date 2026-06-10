@@ -16,7 +16,7 @@ export default defineConfig(function (_a) {
             },
         },
         build: {
-            outDir: "../dist",
+            outDir: "../../dist",
             emptyOutDir: true,
         },
     };

@@ -6,8 +6,8 @@
 
 # Frontend
 node_modules/
-frontend/node_modules/
-frontend/.npm-cache/
+apps/web/node_modules/
+apps/web/.npm-cache/
 dist/
 build/
 coverage/
@@ -54,6 +54,7 @@ Thumbs.db
 !docs/
 !docs/*.md
 !backend/src/rag/TODO.md
+!apps/android/README.md
 models/*
 data/*
 !data/recipes_multi_format/

@@ -503,5 +503,5 @@ RAGAS 指标：
 | RAG 检索器 | `backend/src/rag/retriever.py` |
 | 文档切分 | `backend/src/rag/chunker.py` |
 | SSE API | `backend/src/api/v1/endpoints/agent.py` |
-| 前端流式消费 | `frontend/src/services/chat/chatService.ts` |
-| 前端工作台状态 | `frontend/src/hooks/chat/useWorkspace.ts` |
+| 前端流式消费 | `apps/web/src/services/chat/chatService.ts` |
+| 前端工作台状态 | `apps/web/src/hooks/chat/useWorkspace.ts` |
